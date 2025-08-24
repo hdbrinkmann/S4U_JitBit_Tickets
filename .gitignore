@@ -48,3 +48,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# JSON - never commit JSON files
+*.[Jj][Ss][Oo][Nn]
