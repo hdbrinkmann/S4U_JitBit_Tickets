@@ -133,9 +133,9 @@ def hole_ticket_basis_daten(ticket_id):
         if response.status_code == 200:
             return response.json()
         else:
-            return None
-    except:
-        return None
+            return {'error': f'HTTP {response.status_code}', 'ticket_id': ticket_id}
+    except Exception as e:
+        return {'error': f'Exception: {str(e)}', 'ticket_id': ticket_id}
 
 def hole_ticket_kommentare(ticket_id):
     """Lädt alle Kommentare/Konversation eines Tickets"""
@@ -284,29 +284,64 @@ def exportiere_relevante_tickets():
     print(f"\nGefunden: {len(ticket_ids)} Tickets")
     print(f"Bereich: {min(ticket_ids)} bis {max(ticket_ids)}")
     
-    # Benutzer fragen
-    print("\nOptionen:")
-    print(f"1) Alle {len(ticket_ids)} Tickets prüfen (nur geschlossene werden exportiert)")
-    print("2) Nur eine Teilmenge prüfen")
-    print("3) Test: Nur die ersten 10 Tickets")
-    
-    wahl = input("\nIhre Wahl (1-3): ").strip()
-    
-    if wahl == '1':
-        zu_pruefende_ids = ticket_ids
-    elif wahl == '2':
-        anzahl = input(f"Wie viele Tickets prüfen (max {len(ticket_ids)})? ")
-        if anzahl.isdigit():
-            anzahl = min(int(anzahl), len(ticket_ids))
-            zu_pruefende_ids = ticket_ids[:anzahl]
+    # Benutzer fragen (mit Wiederholung bei ungültiger Eingabe)
+    zu_pruefende_ids = None
+    while zu_pruefende_ids is None:
+        print("\nOptionen:")
+        print(f"1) Alle {len(ticket_ids)} Tickets prüfen (nur geschlossene werden exportiert)")
+        print("2) Nur eine Teilmenge prüfen")
+        print("3) Test: Nur die ersten 10 Tickets")
+        print("4) Ab bestimmter Ticket-ID beginnen")
+        
+        wahl = input("\nIhre Wahl (1-4): ").strip()
+        
+        if wahl == '1':
+            zu_pruefende_ids = ticket_ids
+        elif wahl == '2':
+            while True:
+                anzahl = input(f"Wie viele Tickets prüfen (max {len(ticket_ids)})? ")
+                if anzahl.isdigit():
+                    anzahl = min(int(anzahl), len(ticket_ids))
+                    zu_pruefende_ids = ticket_ids[:anzahl]
+                    break
+                else:
+                    print("Ungültige Eingabe. Bitte eine Zahl eingeben.")
+        elif wahl == '3':
+            zu_pruefende_ids = ticket_ids[:10]
+        elif wahl == '4':
+            # Ab bestimmter Ticket-ID beginnen
+            print(f"\nVerfügbare Ticket-IDs: {min(ticket_ids)} bis {max(ticket_ids)}")
+            
+            while True:
+                start_ticket_id = input("Ab welcher Ticket-ID beginnen? ").strip()
+                
+                if start_ticket_id.isdigit():
+                    start_ticket_id = int(start_ticket_id)
+                    
+                    # Finde den Index der Start-Ticket-ID
+                    if start_ticket_id in ticket_ids:
+                        start_index = ticket_ids.index(start_ticket_id)
+                        zu_pruefende_ids = ticket_ids[start_index:]
+                        print(f"Beginne ab Ticket-ID {start_ticket_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                        print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
+                        break
+                    else:
+                        # Ticket-ID nicht gefunden - finde die nächsthöhere
+                        hohere_ids = [tid for tid in ticket_ids if tid >= start_ticket_id]
+                        if hohere_ids:
+                            naechste_id = min(hohere_ids)
+                            start_index = ticket_ids.index(naechste_id)
+                            zu_pruefende_ids = ticket_ids[start_index:]
+                            print(f"Ticket-ID {start_ticket_id} nicht gefunden.")
+                            print(f"Beginne stattdessen ab nächsthöherer ID: {naechste_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                            print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
+                            break
+                        else:
+                            print(f"Keine Ticket-ID >= {start_ticket_id} gefunden! Bitte eine andere ID eingeben.")
+                else:
+                    print("Ungültige Ticket-ID. Bitte eine Zahl eingeben.")
         else:
-            print("Ungültige Eingabe.")
-            return
-    elif wahl == '3':
-        zu_pruefende_ids = ticket_ids[:10]
-    else:
-        print("Ungültige Wahl.")
-        return
+            print("Ungültige Wahl. Bitte 1, 2, 3 oder 4 eingeben.")
     
     print(f"\nPrüfe {len(zu_pruefende_ids)} Tickets auf geschlossene Tickets...")
     print(f"(Filter: Status='Geschlossen' UND Kategorie in {ERLAUBTE_KATEGORIEN})")
@@ -319,10 +354,16 @@ def exportiere_relevante_tickets():
         print("Abgebrochen.")
         return
     
-    # 2. Lade relevante Daten nur für geschlossene Tickets
+    # 2. Lade relevante Daten nur für geschlossene Tickets mit detaillierter Fehlersammlung
     geschlossene_tickets = []
     nicht_geschlossen = 0
-    fehler_count = 0
+    fehler_details = {
+        'http_fehler': [],
+        'kategorien_ausschluss': [],
+        'api_exceptions': [],
+        'unbekannte_fehler': [],
+        'status_nicht_geschlossen': []
+    }
     start_time = time.time()
     
     for i, ticket_id in enumerate(zu_pruefende_ids):
@@ -335,28 +376,89 @@ def exportiere_relevante_tickets():
                 eta_minutes = int(eta_seconds / 60)
                 print(f"Fortschritt: {fortschritt:.1f}% - Ticket {i+1}/{len(zu_pruefende_ids)} (ID: {ticket_id}) - Geschlossen: {len(geschlossene_tickets)} - ETA: {eta_minutes}min")
         
-        relevante_daten = extrahiere_relevante_daten(ticket_id)
+        # Detaillierte Analyse des Tickets
+        basis_daten = hole_ticket_basis_daten(ticket_id)
         
+        # Prüfe auf Fehler beim Laden der Basis-Daten
+        if isinstance(basis_daten, dict) and 'error' in basis_daten:
+            error_msg = basis_daten['error']
+            if 'HTTP' in error_msg:
+                fehler_details['http_fehler'].append({'ticket_id': ticket_id, 'error': error_msg})
+            elif 'Exception' in error_msg:
+                fehler_details['api_exceptions'].append({'ticket_id': ticket_id, 'error': error_msg})
+            else:
+                fehler_details['unbekannte_fehler'].append({'ticket_id': ticket_id, 'error': error_msg})
+            continue
+        elif not basis_daten:
+            fehler_details['unbekannte_fehler'].append({'ticket_id': ticket_id, 'error': 'Keine Daten erhalten'})
+            continue
+        
+        # Prüfe Status
+        status = basis_daten.get('Status', '')
+        if status != 'Geschlossen':
+            fehler_details['status_nicht_geschlossen'].append({'ticket_id': ticket_id, 'status': status})
+            continue
+        
+        # Prüfe Kategorie
+        category_name = basis_daten.get('CategoryName', '')
+        if category_name not in ERLAUBTE_KATEGORIEN:
+            fehler_details['kategorien_ausschluss'].append({'ticket_id': ticket_id, 'kategorie': category_name})
+            continue
+        
+        # Wenn wir hier ankommen, ist es ein gültiges Ticket
+        relevante_daten = extrahiere_relevante_daten(ticket_id)
         if relevante_daten:
             geschlossene_tickets.append(relevante_daten)
-        elif relevante_daten is None:
-            # Entweder Fehler beim Laden oder nicht geschlossen
-            basis_daten = hole_ticket_basis_daten(ticket_id)
-            if basis_daten and basis_daten.get('Status') != 'Geschlossen':
-                nicht_geschlossen += 1
-            else:
-                fehler_count += 1
+        else:
+            fehler_details['unbekannte_fehler'].append({'ticket_id': ticket_id, 'error': 'Extraktion fehlgeschlagen trotz gültiger Basis-Daten'})
         
         # API schonen
         time.sleep(0.1)
     
     total_time = time.time() - start_time
     
+    # Fehlerstatistiken berechnen
+    gesamt_fehler = (len(fehler_details['http_fehler']) + 
+                     len(fehler_details['api_exceptions']) + 
+                     len(fehler_details['unbekannte_fehler']) + 
+                     len(fehler_details['kategorien_ausschluss']) + 
+                     len(fehler_details['status_nicht_geschlossen']))
+    
     print(f"\n=== LADE-ERGEBNIS ===")
     print(f"Geschlossene Tickets gefunden: {len(geschlossene_tickets)}")
-    print(f"Nicht geschlossene Tickets: {nicht_geschlossen}")
-    print(f"Fehler: {fehler_count}")
+    print(f"Gesamt-Fehler: {gesamt_fehler}")
     print(f"Dauer: {total_time:.1f} Sekunden ({total_time/60:.1f} Minuten)")
+    
+    print(f"\n=== FEHLER-DETAILS ===")
+    print(f"HTTP-Fehler: {len(fehler_details['http_fehler'])}")
+    print(f"API-Exceptions: {len(fehler_details['api_exceptions'])}")
+    print(f"Status nicht geschlossen: {len(fehler_details['status_nicht_geschlossen'])}")
+    print(f"Kategorien ausgeschlossen: {len(fehler_details['kategorien_ausschluss'])}")
+    print(f"Unbekannte Fehler: {len(fehler_details['unbekannte_fehler'])}")
+    
+    # Beispiele für häufigste Fehlertypen zeigen
+    if fehler_details['http_fehler']:
+        print(f"\nBeispiele HTTP-Fehler (erste 3):")
+        for beispiel in fehler_details['http_fehler'][:3]:
+            print(f"  Ticket {beispiel['ticket_id']}: {beispiel['error']}")
+    
+    if fehler_details['status_nicht_geschlossen']:
+        status_counts = {}
+        for item in fehler_details['status_nicht_geschlossen']:
+            status = item['status']
+            status_counts[status] = status_counts.get(status, 0) + 1
+        print(f"\nStatus-Verteilung (nicht geschlossen):")
+        for status, count in sorted(status_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+            print(f"  {status}: {count} Tickets")
+    
+    if fehler_details['kategorien_ausschluss']:
+        kategorie_counts = {}
+        for item in fehler_details['kategorien_ausschluss']:
+            kategorie = item['kategorie']
+            kategorie_counts[kategorie] = kategorie_counts.get(kategorie, 0) + 1
+        print(f"\nKategorien (ausgeschlossen):")
+        for kategorie, count in sorted(kategorie_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+            print(f"  {kategorie}: {count} Tickets")
     
     if not geschlossene_tickets:
         print("Keine geschlossenen Tickets gefunden!")
@@ -378,7 +480,7 @@ def exportiere_relevante_tickets():
     
     # 4. JSON-Export
     timestamp = time.strftime('%Y%m%d_%H%M%S')
-    filename = f'jitbit_geschlossene_tickets_relevant_{timestamp}.json'
+    filename = f'JitBit_relevante_Tickets.json'
     
     print(f"\nExportiere nach: {filename}")
     
