@@ -4,7 +4,7 @@ This repository contains two Python programs that work together to extract close
 
 Programs:
 - ticket_relevante_felder.py — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
-- process_tickets_with_llm.py — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use.
+- process_tickets_with_llm.py — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (now includes original Subject in the output summaries).
 
 ------------------------------------------------------------
 ## 1) Export closed Jitbit tickets (ticket_relevante_felder.py)
@@ -26,10 +26,10 @@ API Endpoints used:
   - Used for pagination through issues (returns IssueID).
 - GET /helpdesk/api/Ticket/{issue_id}
   - Used to resolve the real TicketID from IssueID.
-- GET /helpdesk/api/Comments/{ticket_id}
+- GET /helpdesk/api/Comments/{ticket_id} (fallbacks supported: /Comments?ticketId=..., case variants)
   - Loads full conversation history (comments).
-- GET /helpdesk/api/Attachments/{ticket_id}
-  - Loads all ticket-level attachments.
+- GET /helpdesk/api/Attachments/{ticket_id} (fallbacks attempted: /Attachments?ticketId=..., /Attachments?commentId=..., case variants)
+  - Note: Some Jitbit instances return 404 for Attachments endpoints. The exporter therefore also extracts attachment links from HTML in the ticket Body and each comment (href/src), normalizes relative URLs, and deduplicates. Comment-level attachments may be discovered this way even when the API does not expose them.
 
 Filtering logic:
 - Only tickets with Status == "Geschlossen".
@@ -49,7 +49,7 @@ python3 ticket_relevante_felder.py
   - Fetch all tickets and filter closed ones
   - Process a subset, the first 10, or start from a given TicketID
 - Output file: JitBit_relevante_Tickets.json
-- The script prints stats and error diagnostics (HTTP errors, excluded categories, not-closed statuses).
+- The script prints stats and error diagnostics (HTTP errors, excluded categories, not-closed statuses). It also offers debug options in the interactive menu to inspect attachment API responses and extracted links for a specific ticket (e.g., ticket 23480 or a custom ID).
 
 Test single ticket:
 ```
@@ -94,7 +94,7 @@ Purpose:
 - Build an LLM prompt from each ticket’s subject, body, and comments.
 - Ask the LLM to decide if the ticket has a real technical problem and a concrete solution (not trivial requests).
 - For relevant tickets, generate a concise problem and solution summary.
-- Aggregate all attachment URLs found (ticket-level and comment-level) into attachment_urls for downstream use.
+- Aggregate image URLs (from ticket-level and comment-level attachments/HTML) into image_urls for downstream use. The LLM does not handle URLs.
 
 Environment:
 - Create a .env file in the repo root:
@@ -121,7 +121,7 @@ Input:
 
 Outputs:
 - Ticket_Data.JSON — Array with compact summaries of relevant tickets:
-  - ticket_id, date, problem, solution, attachment_urls
+  - ticket_id, date, subject, problem, solution, image_urls
 - not relevant.json — An object with "tickets": [ ...raw ticket objects... ] for manual review later.
 
 LLM Output Schema (enforced in prompt):
@@ -134,7 +134,7 @@ LLM Output Schema (enforced in prompt):
   "solution": "<string, markdown allowed>"
 }
 ```
-- The model is explicitly instructed NOT to include URLs; the script aggregates URLs into attachment_urls.
+- The model is explicitly instructed NOT to include URLs; the processor aggregates image URLs into image_urls.
 
 Robust JSON parsing:
 - Removes Markdown code fences (``` / ```json).
@@ -156,33 +156,71 @@ Key Flags:
 - --only-ticket-id ID
   - Process only a single ticket for debugging.
 
-Common runs:
-- Basic (default input/output paths):
+CLI reference and examples:
+
+Parameters:
+- --input PATH
+  - Path to the input JSON produced by the exporter. Supports either an object with top-level "tickets": [...] or a top-level array of ticket objects. Default: JitBit_relevante_Tickets.json
+- --output PATH
+  - Path to write relevant summaries as a JSON array. Default: Ticket_Data.JSON
+- --not-relevant-out PATH
+  - Path to write raw “not relevant” tickets as an object: {"tickets": [ ... ]}. Default: not relevant.json
+- --limit N
+  - Collect only N relevant tickets. The loop continues until N relevant are gathered or input ends; non-relevant are skipped and do not count towards the limit. Default: unlimited
+- --max-calls N
+  - Safety cap on total LLM calls. Useful for quick tests/cost control. Default: unlimited
+- --max-tokens N
+  - max_tokens for the LLM response. Default: 3000
+- --temperature FLOAT
+  - Sampling temperature for the LLM. Default: 0.2
+- --start-index K
+  - Skip the first K tickets in the chosen order (streaming or newest-first). Default: 0
+- --append
+  - Append to existing outputs if they exist instead of overwriting. The relevant list will be extended, and not relevant will be merged. Default: off
+- --only-ticket-id ID
+  - Process a single ticket (by ticket_id) for debugging. Often combine with --limit 1 --max-calls 1
+- --newest-first
+  - Load the entire file into memory and process tickets in descending ticket_id order. Faster prioritization of new tickets but requires enough RAM
+
+Environment:
+- TOGETHER_API_KEY (required) — from .env or your shell env
+- LLM_MODEL (preferred) or TOGETHER_MODEL — model id string; defaults to meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+
+Basic runs:
+- Default input/output paths:
 ```
 python3 process_tickets_with_llm.py
 ```
 
-- Process newest tickets first and collect 200 relevant summaries:
-```
-python3 process_tickets_with_llm.py --newest-first --limit 200
-```
-
-- Quick test: limit relevant outputs and cap API calls:
+- Quick sanity check (limit output volume and cost):
 ```
 python3 process_tickets_with_llm.py --limit 10 --max-calls 20
 ```
 
-- Resume from an offset in newest-first order (skip first 100 newest, then collect 50 relevant):
+Newest-first and offsets:
+- Prioritize newest tickets and collect 200 relevant:
+```
+python3 process_tickets_with_llm.py --newest-first --limit 200
+```
+
+- Resume on newest-first after skipping first 100 newest, then collect 50 relevant:
 ```
 python3 process_tickets_with_llm.py --newest-first --start-index 100 --limit 50
 ```
 
-- Append to existing outputs:
+Append mode (incremental processing):
+- Add 25 more relevant summaries to existing outputs:
 ```
 python3 process_tickets_with_llm.py --append --limit 25
 ```
 
-- Explicit paths:
+Work on specific tickets / diagnostics:
+- Process only one ticket by ID:
+```
+python3 process_tickets_with_llm.py --only-ticket-id 23480 --limit 1 --max-calls 1
+```
+
+- Use explicit paths (if you keep inputs/outputs separate):
 ```
 python3 process_tickets_with_llm.py \
   --input JitBit_relevante_Tickets.json \
@@ -191,10 +229,26 @@ python3 process_tickets_with_llm.py \
   --limit 50 --max-calls 200
 ```
 
-- Process only one ticket by ID (diagnostics):
+Recipes:
+- Process the latest N relevant tickets quickly:
 ```
-python3 process_tickets_with_llm.py --only-ticket-id 49 --limit 1 --max-calls 1
+python3 process_tickets_with_llm.py --newest-first --limit 100 --max-calls 200
 ```
+
+- Memory-constrained large file (prefer streaming, no newest-first):
+```
+python3 process_tickets_with_llm.py --limit 300 --max-calls 600
+```
+
+- Debug LLM parsing failures (check llm_parse_errors/ for details):
+```
+python3 process_tickets_with_llm.py --only-ticket-id 12345 --limit 1 --max-calls 1
+```
+
+Notes:
+- The model is instructed not to output URLs; the processor aggregates image URLs into image_urls automatically from ticket-level and comment-level attachments/HTML.
+- If your export is very large, install ijson (pip3 install -U ijson) to enable streaming; avoid --newest-first in that case.
+- Schema note (2025-08-24): Ticket_Data.JSON now includes the original "subject" field. When using --append with older files, previous entries might not contain "subject"; regenerate or post-process if uniform schema is required.
 
 Output schemas:
 
@@ -204,9 +258,10 @@ Output schemas:
   {
     "ticket_id": 49,
     "date": "2018-11-27T08:15:55.367Z",
+    "subject": "Kurzes Betreff-Beispiel",
     "problem": "Markdown summary...",
     "solution": "Markdown summary...",
-    "attachment_urls": ["https://...", "https://..."]
+    "image_urls": ["https://...", "https://..."]
   },
   ...
 ]

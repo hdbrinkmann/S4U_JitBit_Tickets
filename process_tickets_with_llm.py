@@ -5,7 +5,7 @@ process_tickets_with_llm.py
 
 Standalone script to process exported Jitbit tickets with Together.ai, classify relevance,
 and produce two outputs:
-- Ticket_Data.JSON: JSON array of relevant ticket summaries (LLM-normalized)
+- Ticket_Data.JSON: JSON array of relevant ticket summaries (LLM-normalized; includes original Subject)
 - not relevant.json: raw ticket objects for tickets classified as "not relevant"
 
 Input is expected to be the output from ticket_relevante_felder.py:
@@ -48,7 +48,7 @@ Usage:
 
 Notes:
 - --limit counts ONLY relevant tickets (continue until N relevant are gathered or input ends)
-- Attachment URLs are aggregated by the script as "attachment_urls" (array). The LLM must not include URLs.
+- Image URLs are aggregated by the script as "image_urls" (array). The LLM must not include URLs.
 """
 
 from __future__ import annotations
@@ -238,7 +238,11 @@ Strictly output a single JSON object only (no code fences, no prose). Exact keys
 If the ticket is not relevant, set:
 "problem": "not relevant", "solution": "".
 
-Do not include any URLs in the JSON. The system will extract URLs separately."""
+Do not include any URLs in the JSON. The system will extract URLs separately.
+
+IMPORTANT LANGUAGE INSTRUCTIONS: ALWAYS USE THE LANGUAGE OF THE TICKET (e.g., if the ticket is in German, respond in German).
+
+"""
 
 USER_SUFFIX_INSTRUCTION = """Output only a single JSON object with the exact keys: ticket_id, date, problem, solution. Do not include any URLs."""
 
@@ -339,6 +343,38 @@ JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.IGNORECASE)
 
+# Image URL helpers
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+
+def _looks_like_image_url(u: str) -> bool:
+    try:
+        if not isinstance(u, str):
+            return False
+        lu = u.lower()
+        # Quick heuristic: path or query contains an image extension
+        if any(ext in lu for ext in IMAGE_EXTS):
+            return True
+        # Jitbit often serves files via extensionless endpoints like /helpdesk/File/Get/{id}
+        # Treat those as images for downstream use (consumers can further filter if needed).
+        from urllib.parse import urlparse
+        p = urlparse(lu)
+        path = (p.path or "")
+        if "/file/get/" in path or "/helpdesk/file/get/" in path:
+            return True
+        return False
+    except Exception:
+        return False
+
+def _filter_image_urls(urls: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for u in urls:
+        if isinstance(u, str) and u.startswith(("http://", "https://")) and _looks_like_image_url(u):
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+    return out
+
 def strip_code_fences(text: str) -> str:
     """
     Remove surrounding Markdown code fences like ```json ... ``` or ``` ... ```.
@@ -419,6 +455,139 @@ def extract_first_json_object(text: str) -> Optional[str]:
     return m.group(0) if m else None
 
 
+# Heuristic repair helpers to make JSON parsing robust against common LLM mistakes
+
+def _find_solution_string_bounds(obj_text: str) -> Optional[Tuple[int, int]]:
+    """
+    Find the start (index after opening quote) and end (index of closing quote) of the solution string value.
+    Returns (start, end) or None if not found.
+    """
+    m = re.search(r'"solution"\s*:\s*"', obj_text)
+    if not m:
+        return None
+    i = m.end()
+    start = i
+    escape = False
+    while i < len(obj_text):
+        ch = obj_text[i]
+        if escape:
+            escape = False
+        else:
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                return (start, i)
+        i += 1
+    return None
+
+
+def _merge_numeric_keys_into_solution(obj_text: str) -> Tuple[str, Optional[str]]:
+    """
+    Merge stray numeric keys like ,"6": "text" into the end of the solution string.
+    Returns (new_text, appended_text or None).
+    """
+    pattern = re.compile(r',\s*"\d+"\s*:\s*"(.*?)"\s*(?=[,}])', re.DOTALL)
+    parts = []
+    spans = []
+    for m in pattern.finditer(obj_text):
+        parts.append(m.group(1))
+        spans.append(m.span())
+
+    if not spans:
+        return obj_text, None
+
+    # Remove spans from text
+    new_text_parts = []
+    last = 0
+    for s, e in spans:
+        new_text_parts.append(obj_text[last:s])
+        last = e
+    new_text_parts.append(obj_text[last:])
+    new_text = "".join(new_text_parts)
+
+    # Append collected text to the end of the solution string if present
+    bounds = _find_solution_string_bounds(new_text)
+    if bounds:
+        s_idx, e_idx = bounds
+        append_text = " " + " ".join(parts).strip()
+        new_text = new_text[:e_idx] + append_text + new_text[e_idx:]
+        return new_text, append_text.strip()
+    else:
+        # If no solution field, just return with numeric keys removed
+        return new_text, " ".join(parts).strip() if parts else None
+
+
+def repair_llm_json_str(obj_text: str) -> str:
+    """
+    Attempt to repair common top-level JSON issues:
+    - Missing ticket_id key at start: { 12345, ... } -> {"ticket_id": 12345, ...}
+    - Bare ISO date value between fields -> insert as "date": "<iso>"
+    - Stray numeric keys like "6": "..." -> merge into solution string
+    """
+    t = obj_text
+
+    # Missing "ticket_id" key at start
+    t = re.sub(r'^{\s*(\d+)\s*,', r'{"ticket_id": \1,', t)
+
+    # Bare ISO date token between fields (with comma or end brace)
+    t = re.sub(
+        r'([{,]\s*)(\d{4}-\d{2}-\d{2}T[0-9:.+\-Zz]+)(\s*[,}])',
+        lambda m: f'{m.group(1)}"date": "{m.group(2)}"{m.group(3)}',
+        t,
+    )
+
+    # Merge stray numeric keys into the solution value
+    t, _ = _merge_numeric_keys_into_solution(t)
+
+    return t
+
+
+def salvage_llm_fields(raw_text: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort extraction when JSON parsing still fails.
+    Tries to extract ticket_id/date/problem/solution via regex boundaries.
+    """
+    cleaned = strip_code_fences(raw_text or "")
+    obj = extract_first_json_object(cleaned) or cleaned
+
+    result: Dict[str, Any] = {}
+
+    m = re.search(r'"ticket_id"\s*:\s*(\d+)', obj)
+    if m:
+        try:
+            result["ticket_id"] = int(m.group(1))
+        except Exception:
+            pass
+
+    m = re.search(r'"date"\s*:\s*"([^"]+)"', obj)
+    if m:
+        result["date"] = m.group(1).strip()
+    else:
+        # bare ISO date anywhere
+        m2 = re.search(r'([12]\d{3}-\d{2}-\d{2}T[0-9:.+\-Zz]+)', obj)
+        if m2:
+            result["date"] = m2.group(1).strip()
+
+    # problem: capture until next known key
+    m = re.search(r'"problem"\s*:\s*"(.*?)"\s*,\s*"(?:solution|date|ticket_id)"', obj, re.DOTALL)
+    if not m:
+        m = re.search(r'"problem"\s*:\s*"(.*?)"\s*[},]', obj, re.DOTALL)
+    if m:
+        result["problem"] = m.group(1).strip()
+
+    # solution: capture until , or }
+    m = re.search(r'"solution"\s*:\s*"(.*?)"\s*[},]', obj, re.DOTALL)
+    if m:
+        result["solution"] = m.group(1).strip()
+
+    if "problem" in result or "solution" in result:
+        result.setdefault("problem", "")
+        result.setdefault("solution", "")
+        return result
+
+    return None
+
+
 def normalize_url_field(url_field: Any, attachment_urls: List[str], ticket_page_url: str) -> str:
     """
     Ensure a single URL string:
@@ -451,33 +620,40 @@ def parse_and_validate_llm_json(raw_text: str) -> Optional[Dict[str, Any]]:
     """
     Extract and parse JSON object from LLM output.
     Returns dict or None if parsing fails.
+    Heuristically repairs common issues and finally attempts a salvage pass.
     """
-    # Remove code fences and extract object
     obj_str = extract_first_json_object(raw_text or "")
     if not obj_str:
-        return None
+        # Try salvage directly from raw text if no object found
+        return salvage_llm_fields(raw_text)
+
+    # First, a strict parse attempt
     try:
         return json.loads(obj_str)
     except Exception:
-        # Try to fix common JSON issues: trailing commas, control chars, and compact whitespace
-        try:
-            s = obj_str
-            # Remove non-breaking spaces and control characters except common whitespace
-            s = s.replace("\u00A0", " ")
-            s = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", s)
-            # Remove trailing commas before } or ]
-            s = re.sub(r",\s*([}\]])", r"\1", s)
-            # Compact newlines to spaces
-            s = s.replace("\r", " ").replace("\n", " ")
-            return json.loads(s)
-        except Exception:
-            return None
+        pass
+
+    # Second, sanitize control chars, NBSPs, trailing commas, and flatten newlines
+    s = obj_str
+    try:
+        s = s.replace("\u00A0", " ")
+        s = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", s)
+        s = re.sub(r",\s*([}\]])", r"\1", s)
+        s = s.replace("\r", " ").replace("\n", " ")
+        # Heuristic repairs for common Together/LLM mistakes
+        s = repair_llm_json_str(s)
+        return json.loads(s)
+    except Exception:
+        # Final salvage: try to pull fields without full JSON validity
+        return salvage_llm_fields(raw_text)
 
 
 def is_not_relevant(problem_field: Any) -> bool:
     if not isinstance(problem_field, str):
         return False
-    return problem_field.strip().lower() == "not relevant"
+    val = problem_field.strip().lower()
+    # Support multiple languages/synonyms
+    return val in {"not relevant", "nicht relevant", "irrelevant"}
 
 
 def normalize_summary(
@@ -491,6 +667,7 @@ def normalize_summary(
     """
     ticket_id = ticket.get("ticket_id")
     issue_date = ticket.get("IssueDate") or ""
+    subject = ticket.get("Subject") or ""
 
     # Coerce and override ticket_id from source of truth
     out_ticket_id = int(ticket_id) if isinstance(ticket_id, (int, float, str)) and str(ticket_id).isdigit() else ticket_id
@@ -521,12 +698,15 @@ def normalize_summary(
             seen.add(u)
             urls_dedup.append(u)
 
+    images_dedup = _filter_image_urls(urls_dedup)
+
     return {
         "ticket_id": out_ticket_id,
         "date": date_val,
+        "subject": subject,
         "problem": problem,
         "solution": solution,
-        "attachment_urls": urls_dedup,
+        "image_urls": images_dedup,
     }
 
 

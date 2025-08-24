@@ -3,9 +3,23 @@ import json
 import time
 import re
 import html
+from urllib.parse import urljoin, urlparse
+import argparse
+import sys
 
-# API-Token
-api_token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjQsImFkZCI6IjI1MkQ2N0M4MDkzNEE5NTlDMEUxQzRDMTZDNDlFQUExNEU5NTVFN0EyQjc5Q0YxMzNDRkM4NTA0MjU0MkY4RjUifQ.Tw_dFNCqB3wU_zDFDIw9XwXPoF9kQM8asc235pnP0yo'
+import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    # Wenn python-dotenv nicht installiert ist, versuchen wir trotzdem die Umgebungsvariablen zu lesen
+    pass
+
+# API-Token aus .env lesen
+api_token = os.getenv("JITBIT_API_TOKEN", "").strip()
+
+if not api_token:
+    raise EnvironmentError("JITBIT_API_TOKEN ist nicht gesetzt. Bitte in der .env-Datei (JITBIT_API_TOKEN=...) oder als Umgebungsvariable definieren.")
 
 # URL Ihrer Jitbit-Installation
 jitbit_url = 'https://support.4plan.de'
@@ -138,27 +152,76 @@ def hole_ticket_basis_daten(ticket_id):
         return {'error': f'Exception: {str(e)}', 'ticket_id': ticket_id}
 
 def hole_ticket_kommentare(ticket_id):
-    """Lädt alle Kommentare/Konversation eines Tickets"""
-    url = f'{jitbit_url}/helpdesk/api/Comments/{ticket_id}'
+    """Lädt alle Kommentare/Konversation eines Tickets (mit Fallback-Endpoint)"""
+    # Primär: Pfad-Variante
+    url1 = f'{jitbit_url}/helpdesk/api/Comments/{ticket_id}'
+    # Fallback: Query-Variante (manche Jitbit-Deployments erwarten dies)
+    url2 = f'{jitbit_url}/helpdesk/api/Comments'
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return []
-    except:
+        resp = requests.get(url1, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Wenn Liste und ggf. Inhalte vorhanden, zurückgeben
+            if isinstance(data, list) and (len(data) > 0 or data == []):
+                return data
+        # Fallback 1: ticketId
+        resp2 = requests.get(url2, headers=headers, params={'ticketId': ticket_id}, timeout=15)
+        if resp2.status_code == 200:
+            data2 = resp2.json()
+            if isinstance(data2, list):
+                return data2
+        # Fallback 2: ticketid (andere Schreibweise)
+        resp3 = requests.get(url2, headers=headers, params={'ticketid': ticket_id}, timeout=15)
+        if resp3.status_code == 200:
+            data3 = resp3.json()
+            if isinstance(data3, list):
+                return data3
+        return []
+    except Exception:
         return []
 
 def hole_ticket_anhange(ticket_id):
-    """Lädt alle Anhänge eines Tickets"""
-    url = f'{jitbit_url}/helpdesk/api/Attachments/{ticket_id}'
+    """Lädt alle Anhänge eines Tickets (mit Fallback-Endpoint)"""
+    # Primär: Pfad-Variante
+    url1 = f'{jitbit_url}/helpdesk/api/Attachments/{ticket_id}'
+    # Fallback: Query-Variante (manche Jitbit-Deployments erwarten dies)
+    url2 = f'{jitbit_url}/helpdesk/api/Attachments'
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return []
-    except:
+        resp = requests.get(url1, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Wenn Liste und ggf. Inhalte vorhanden, zurückgeben
+            if isinstance(data, list) and (len(data) > 0 or data == []):
+                return data
+        # Fallback 1: ticketId
+        resp2 = requests.get(url2, headers=headers, params={'ticketId': ticket_id}, timeout=15)
+        if resp2.status_code == 200:
+            data2 = resp2.json()
+            if isinstance(data2, list):
+                return data2
+        # Fallback 2: ticketid (andere Schreibweise)
+        resp3 = requests.get(url2, headers=headers, params={'ticketid': ticket_id}, timeout=15)
+        if resp3.status_code == 200:
+            data3 = resp3.json()
+            if isinstance(data3, list):
+                return data3
+        return []
+    except Exception:
+        return []
+
+def hole_kommentar_anhange(comment_id):
+    """Lädt alle Anhänge eines Kommentars (separate API-Abfrage nach commentId)"""
+    url = f'{jitbit_url}/helpdesk/api/Attachments'
+    try:
+        # Verschiedene Schreibweisen für den Parameternamen testen
+        for key in ('commentId', 'commentID', 'commentid', 'CommentId', 'CommentID'):
+            resp = requests.get(url, headers=headers, params={key: comment_id}, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    return data
+        return []
+    except Exception:
         return []
 
 def bereinige_html_text(html_content):
@@ -195,6 +258,80 @@ def bereinige_html_text(html_content):
     
     return text
 
+def normalisiere_url(u: str) -> str:
+    """Macht relative URLs absolut mithilfe von jitbit_url"""
+    if not u or not isinstance(u, str):
+        return ""
+    u = u.strip()
+    if not u:
+        return ""
+    try:
+        parsed = urlparse(u)
+        if parsed.scheme in ("http", "https"):
+            return u
+        # relative Pfade -> absolut machen
+        return urljoin(jitbit_url + "/", u.lstrip("/"))
+    except Exception:
+        return u
+
+def guess_filename_from_url(u: str) -> str:
+    try:
+        path = urlparse(u).path
+        if not path:
+            return ""
+        name = path.split("/")[-1]
+        return name or ""
+    except Exception:
+        return ""
+
+def extrahiere_attachments_aus_html(html_content: str):
+    """
+    Extrahiert potentielle Anhang-Links aus HTML (href/src).
+    Viele Jitbit-Instanzen liefern Attachments nicht über /api/Attachments,
+    sondern als Links/Images in Body/Comments.
+    """
+    if not html_content or not isinstance(html_content, str):
+        return []
+
+    candidates = set()
+    try:
+        # href und src extrahieren
+        for m in re.findall(r'href=["\']([^"\']+)["\']', html_content, flags=re.IGNORECASE):
+            candidates.add(m)
+        for m in re.findall(r'src=["\']([^"\']+)["\']', html_content, flags=re.IGNORECASE):
+            candidates.add(m)
+    except Exception:
+        pass
+
+    # Heuristik: nur Links behalten, die wie Dateien/Attachments aussehen
+    exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg",
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".zip", ".7z", ".rar", ".txt", ".log", ".csv"}
+    keywords = ("attach", "attachment", "download", "file", "upload", "uploads", "image", "img")
+
+    result = []
+    seen = set()
+    for c in candidates:
+        if not c:
+            continue
+        lc = c.lower()
+        if lc.startswith(("mailto:", "javascript:", "#")):
+            continue
+        full = normalisiere_url(c)
+        pl = urlparse(full)
+        # Filter nach Anzeichen für Datei/Attachment
+        looks_like_file = any(pl.path.lower().endswith(ext) for ext in exts)
+        contains_kw = any(k in pl.path.lower() for k in keywords) or any(k in (pl.query or "").lower() for k in keywords)
+        if looks_like_file or contains_kw:
+            if full not in seen:
+                seen.add(full)
+                result.append({
+                    "FileName": guess_filename_from_url(full),
+                    "Url": full,
+                    "Size": 0
+                })
+    return result
+
 def extrahiere_relevante_daten(ticket_id):
     """Extrahiert nur die relevanten Felder für geschlossene Tickets"""
     
@@ -219,17 +356,32 @@ def extrahiere_relevante_daten(ticket_id):
     # Anhänge laden
     anhange_raw = hole_ticket_anhange(ticket_id)
     
-    # Ticket-Anhänge URLs extrahieren
+    # Ticket-Anhänge URLs extrahieren (API + aus HTML-Body)
     ticket_attachments = []
+    seen_ticket_urls = set()
+
+    # 1) API-Resultate (falls vorhanden)
     if anhange_raw:
         for attachment in anhange_raw:
             if isinstance(attachment, dict):
-                att_data = {
-                    "FileName": attachment.get('FileName', ''),
-                    "Url": attachment.get('Url', ''),
-                    "Size": attachment.get('Size', 0)
-                }
-                ticket_attachments.append(att_data)
+                url_val = (attachment.get('Url') or attachment.get('FileUrl') or attachment.get('DownloadUrl') or attachment.get('Link') or '')
+                url_val = normalisiere_url(url_val)
+                if url_val and url_val not in seen_ticket_urls:
+                    att_data = {
+                        "FileName": attachment.get('FileName', '') or guess_filename_from_url(url_val),
+                        "Url": url_val,
+                        "Size": attachment.get('Size', 0)
+                    }
+                    ticket_attachments.append(att_data)
+                    seen_ticket_urls.add(url_val)
+
+    # 2) HTML-Links im Ticket-Body (häufige Quelle für Anhänge bei Jitbit)
+    html_ticket_atts = extrahiere_attachments_aus_html(basis_daten.get('Body', ''))
+    for att in html_ticket_atts:
+        u = att.get("Url") or ""
+        if u and u not in seen_ticket_urls:
+            ticket_attachments.append(att)
+            seen_ticket_urls.add(u)
     
     # Kommentare filtern und relevante Felder extrahieren
     relevante_kommentare = []
@@ -238,18 +390,44 @@ def extrahiere_relevante_daten(ticket_id):
             if isinstance(comment, dict):
                 # Kommentar-Anhänge verarbeiten
                 comment_attachments = []
-                attachments_field = comment.get('Attachments', [])
-                if attachments_field and isinstance(attachments_field, list):
+                # Manche Jitbit-Deployments liefern KEINE eingebetteten Attachments in Comments.
+                # Dann müssen sie separat über /Attachments?commentId=... geladen werden.
+                attachments_field = comment.get('Attachments')
+                if not isinstance(attachments_field, list):
+                    attachments_field = []
+                
+                comment_id = (comment.get('CommentId') or comment.get('CommentID') or
+                              comment.get('Id') or comment.get('ID'))
+                attachments_count_hint = (comment.get('AttachmentsCount') or comment.get('AttachmentCount') or
+                                          comment.get('FilesCount') or comment.get('Files') or 0)
+                
+                # Falls keine eingebetteten Anhänge vorhanden sind, via API pro Kommentar nachladen
+                if (not attachments_field) and comment_id:
+                    fetched_atts = hole_kommentar_anhange(comment_id)
+                    if isinstance(fetched_atts, list):
+                        attachments_field = fetched_atts
+                
+                if isinstance(attachments_field, list) and attachments_field:
                     for att in attachments_field:
                         if isinstance(att, dict):
                             comment_attachments.append({
                                 "FileName": att.get('FileName', ''),
-                                "Url": att.get('Url', ''),
+                                "Url": (att.get('Url') or att.get('FileUrl') or att.get('DownloadUrl') or att.get('Link') or ''),
                                 "Size": att.get('Size', 0)
                             })
+
+                # 3) HTML-Links im Kommentar-Body als zusätzliche Anhänge
+                html_comment_atts = extrahiere_attachments_aus_html(comment.get('Body', ''))
+                if html_comment_atts:
+                    seen_urls = set(a.get("Url") for a in comment_attachments if isinstance(a, dict))
+                    for hatt in html_comment_atts:
+                        u = hatt.get("Url") or ""
+                        if u and u not in seen_urls:
+                            comment_attachments.append(hatt)
+                            seen_urls.add(u)
                 
                 kommentar_data = {
-                    "CommentDate": comment.get('Date', ''),
+                    "CommentDate": (comment.get('CommentDate') or comment.get('Date') or ''),
                     "Body": bereinige_html_text(comment.get('Body', '')),
                     "UserName": comment.get('UserName', ''),
                     "Attachments": comment_attachments
@@ -271,7 +449,77 @@ def extrahiere_relevante_daten(ticket_id):
     
     return relevante_daten
 
-def exportiere_relevante_tickets():
+def debug_attachments(ticket_id):
+    """Diagnose: prüft Ticket- und Kommentar-Anhänge direkt über die API und protokolliert Details"""
+    print(f"=== DEBUG ANHÄNGE FÜR TICKET {ticket_id} ===")
+    try:
+        basis = hole_ticket_basis_daten(ticket_id)
+        echte_ticket_id = ticket_id
+        if isinstance(basis, dict):
+            echte_ticket_id = basis.get('TicketID') or ticket_id
+        if echte_ticket_id != ticket_id:
+            print(f"Hinweis: übergebene ID {ticket_id} ist vermutlich IssueID; verwende TicketID {echte_ticket_id}")
+    except Exception as e:
+        print(f"Fehler beim Laden der Basisdaten: {e}")
+        echte_ticket_id = ticket_id
+
+    # Basisdaten-Details
+    if isinstance(basis, dict):
+        print(f"\nBasisdaten Keys: {list(basis.keys())[:20]}{' ...' if len(basis.keys())>20 else ''}")
+        print(f"Basis TicketID={basis.get('TicketID')}, IssueID={basis.get('IssueID')}, Id={basis.get('Id')}, Url={basis.get('Url')}")
+        print(f"HasAttachments Flags (falls vorhanden): HasAttachments={basis.get('HasAttachments')}, AttachmentsCount={basis.get('AttachmentsCount')}, AttachmentCount={basis.get('AttachmentCount')}, FilesCount={basis.get('FilesCount')}, Files={basis.get('Files')}")
+
+    # Ticket-Level Attachments
+    print("\n-- Ticket-Anhänge --")
+    try:
+        url1 = f'{jitbit_url}/helpdesk/api/Attachments/{echte_ticket_id}'
+        r1 = requests.get(url1, headers=headers, timeout=15)
+        print(f"GET {url1} -> HTTP {r1.status_code}, len(body)={len(r1.text)}")
+        if r1.status_code == 200:
+            data1 = r1.json()
+            print(f"Anhänge (Pfad-Variante): {len(data1) if isinstance(data1, list) else 'keine Liste'}")
+            if isinstance(data1, list) and data1:
+                print(f"Beispiel Keys: {list(data1[0].keys())}")
+        else:
+            print(f"Antwort (Snippet): {r1.text[:300].strip()}")
+    except Exception as e:
+        print(f"Fehler bei Attachments/{echte_ticket_id}: {e}")
+
+    try:
+        url2 = f'{jitbit_url}/helpdesk/api/Attachments'
+        r2 = requests.get(url2, headers=headers, params={'ticketId': echte_ticket_id}, timeout=15)
+        print(f"GET {url2}?ticketId={echte_ticket_id} -> HTTP {r2.status_code}, len(body)={len(r2.text)}")
+        if r2.status_code == 200:
+            data2 = r2.json()
+            print(f"Anhänge (Query-Variante ticketId): {len(data2) if isinstance(data2, list) else 'keine Liste'}")
+            if isinstance(data2, list) and data2:
+                print(f"Beispiel Keys: {list(data2[0].keys())}")
+        else:
+            print(f"Antwort (Snippet): {r2.text[:300].strip()}")
+    except Exception as e:
+        print(f"Fehler bei Attachments?ticketId: {e}")
+
+    # Kommentare und Kommentar-Anhänge
+    print("\n-- Kommentar-Anhänge --")
+    comments = hole_ticket_kommentare(echte_ticket_id) or []
+    print(f"Kommentare geladen: {len(comments)}")
+    if isinstance(comments, list) and comments:
+        print(f"Kommentar[0] Keys: {list(comments[0].keys())[:20]}{' ...' if len(comments[0].keys())>20 else ''}")
+        print(f"Kommentar[0] Flags: HasAttachments={comments[0].get('HasAttachments')}, AttachmentsCount={comments[0].get('AttachmentsCount')}, AttachmentCount={comments[0].get('AttachmentCount')}, FilesCount={comments[0].get('FilesCount')}, Files={comments[0].get('Files')}")
+    for idx, c in enumerate(comments[:10]):
+        if not isinstance(c, dict):
+            continue
+        cid = (c.get('CommentId') or c.get('CommentID') or c.get('Id') or c.get('ID'))
+        embedded = c.get('Attachments')
+        count_hint = (c.get('AttachmentsCount') or c.get('AttachmentCount') or c.get('FilesCount') or c.get('Files') or 0)
+        print(f"- Kommentar #{idx+1}: cid={cid}, embedded_type={type(embedded).__name__}, embedded_count={len(embedded) if isinstance(embedded, list) else 'n/a'}, hint={count_hint}")
+        if cid:
+            fetched = hole_kommentar_anhange(cid) or []
+            print(f"  -> Nachgeladen über /Attachments?commentId={cid}: {len(fetched)} Anhänge")
+            if isinstance(fetched, list) and fetched:
+                print(f"     Beispiel Keys: {list(fetched[0].keys())}")
+
+def exportiere_relevante_tickets(scope_mode=None, first_n=None, start_ticket_id=None, auto_confirm=False):
     """Hauptfunktion: Exportiert alle geschlossenen Tickets mit relevanten Feldern"""
     print("=== JITBIT GESCHLOSSENE TICKETS - RELEVANTE FELDER EXPORT ===\n")
     
@@ -286,62 +534,92 @@ def exportiere_relevante_tickets():
     
     # Benutzer fragen (mit Wiederholung bei ungültiger Eingabe)
     zu_pruefende_ids = None
-    while zu_pruefende_ids is None:
-        print("\nOptionen:")
-        print(f"1) Alle {len(ticket_ids)} Tickets prüfen (nur geschlossene werden exportiert)")
-        print("2) Nur eine Teilmenge prüfen")
-        print("3) Test: Nur die ersten 10 Tickets")
-        print("4) Ab bestimmter Ticket-ID beginnen")
-        
-        wahl = input("\nIhre Wahl (1-4): ").strip()
-        
-        if wahl == '1':
+
+    # Non-interactive scope selection via CLI flags
+    if scope_mode in ('all', 'first', 'start'):
+        if scope_mode == 'all':
             zu_pruefende_ids = ticket_ids
-        elif wahl == '2':
-            while True:
-                anzahl = input(f"Wie viele Tickets prüfen (max {len(ticket_ids)})? ")
-                if anzahl.isdigit():
-                    anzahl = min(int(anzahl), len(ticket_ids))
-                    zu_pruefende_ids = ticket_ids[:anzahl]
-                    break
+        elif scope_mode == 'first':
+            n = first_n if isinstance(first_n, int) and first_n > 0 else 10
+            zu_pruefende_ids = ticket_ids[:min(n, len(ticket_ids))]
+        elif scope_mode == 'start':
+            if isinstance(start_ticket_id, int):
+                if start_ticket_id in ticket_ids:
+                    start_index = ticket_ids.index(start_ticket_id)
+                    zu_pruefende_ids = ticket_ids[start_index:]
+                    print(f"Beginne ab Ticket-ID {start_ticket_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                    print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
                 else:
-                    print("Ungültige Eingabe. Bitte eine Zahl eingeben.")
-        elif wahl == '3':
-            zu_pruefende_ids = ticket_ids[:10]
-        elif wahl == '4':
-            # Ab bestimmter Ticket-ID beginnen
-            print(f"\nVerfügbare Ticket-IDs: {min(ticket_ids)} bis {max(ticket_ids)}")
-            
-            while True:
-                start_ticket_id = input("Ab welcher Ticket-ID beginnen? ").strip()
-                
-                if start_ticket_id.isdigit():
-                    start_ticket_id = int(start_ticket_id)
-                    
-                    # Finde den Index der Start-Ticket-ID
-                    if start_ticket_id in ticket_ids:
-                        start_index = ticket_ids.index(start_ticket_id)
+                    hohere_ids = [tid for tid in ticket_ids if tid >= start_ticket_id]
+                    if hohere_ids:
+                        naechste_id = min(hohere_ids)
+                        start_index = ticket_ids.index(naechste_id)
                         zu_pruefende_ids = ticket_ids[start_index:]
-                        print(f"Beginne ab Ticket-ID {start_ticket_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                        print(f"Ticket-ID {start_ticket_id} nicht gefunden.")
+                        print(f"Beginne stattdessen ab nächsthöherer ID: {naechste_id} (Position {start_index + 1} von {len(ticket_ids)})")
                         print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
+            if zu_pruefende_ids is None:
+                print("Start-ID ungültig – falle auf interaktive Auswahl zurück.")
+
+    if zu_pruefende_ids is None:
+        while zu_pruefende_ids is None:
+            print("\nOptionen:")
+            print(f"1) Alle {len(ticket_ids)} Tickets prüfen (nur geschlossene werden exportiert)")
+            print("2) Nur eine Teilmenge prüfen")
+            print("3) Test: Nur die ersten 10 Tickets")
+            print("4) Ab bestimmter Ticket-ID beginnen")
+            print("\nHinweis: Erst nach Auswahl (1–4) und Bestätigung mit 'j' wird die Datei 'JitBit_relevante_Tickets.json' erstellt.")
+            print("Tipp: Für einen schnellen Test wählen Sie Option 3.")
+            
+            wahl = input("\nIhre Wahl (1-4): ").strip()
+            
+            if wahl == '1':
+                zu_pruefende_ids = ticket_ids
+            elif wahl == '2':
+                while True:
+                    anzahl = input(f"Wie viele Tickets prüfen (max {len(ticket_ids)})? ")
+                    if anzahl.isdigit():
+                        anzahl = min(int(anzahl), len(ticket_ids))
+                        zu_pruefende_ids = ticket_ids[:anzahl]
                         break
                     else:
-                        # Ticket-ID nicht gefunden - finde die nächsthöhere
-                        hohere_ids = [tid for tid in ticket_ids if tid >= start_ticket_id]
-                        if hohere_ids:
-                            naechste_id = min(hohere_ids)
-                            start_index = ticket_ids.index(naechste_id)
+                        print("Ungültige Eingabe. Bitte eine Zahl eingeben.")
+            elif wahl == '3':
+                zu_pruefende_ids = ticket_ids[:10]
+            elif wahl == '4':
+                # Ab bestimmter Ticket-ID beginnen
+                print(f"\nVerfügbare Ticket-IDs: {min(ticket_ids)} bis {max(ticket_ids)}")
+                
+                while True:
+                    start_ticket_id = input("Ab welcher Ticket-ID beginnen? ").strip()
+                    
+                    if start_ticket_id.isdigit():
+                        start_ticket_id = int(start_ticket_id)
+                        
+                        # Finde den Index der Start-Ticket-ID
+                        if start_ticket_id in ticket_ids:
+                            start_index = ticket_ids.index(start_ticket_id)
                             zu_pruefende_ids = ticket_ids[start_index:]
-                            print(f"Ticket-ID {start_ticket_id} nicht gefunden.")
-                            print(f"Beginne stattdessen ab nächsthöherer ID: {naechste_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                            print(f"Beginne ab Ticket-ID {start_ticket_id} (Position {start_index + 1} von {len(ticket_ids)})")
                             print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
                             break
                         else:
-                            print(f"Keine Ticket-ID >= {start_ticket_id} gefunden! Bitte eine andere ID eingeben.")
-                else:
-                    print("Ungültige Ticket-ID. Bitte eine Zahl eingeben.")
-        else:
-            print("Ungültige Wahl. Bitte 1, 2, 3 oder 4 eingeben.")
+                            # Ticket-ID nicht gefunden - finde die nächsthöhere
+                            hohere_ids = [tid for tid in ticket_ids if tid >= start_ticket_id]
+                            if hohere_ids:
+                                naechste_id = min(hohere_ids)
+                                start_index = ticket_ids.index(naechste_id)
+                                zu_pruefende_ids = ticket_ids[start_index:]
+                                print(f"Ticket-ID {start_ticket_id} nicht gefunden.")
+                                print(f"Beginne stattdessen ab nächsthöherer ID: {naechste_id} (Position {start_index + 1} von {len(ticket_ids)})")
+                                print(f"Verbleibende Tickets zu prüfen: {len(zu_pruefende_ids)}")
+                                break
+                            else:
+                                print(f"Keine Ticket-ID >= {start_ticket_id} gefunden! Bitte eine andere ID eingeben.")
+                    else:
+                        print("Ungültige Ticket-ID. Bitte eine Zahl eingeben.")
+            else:
+                print("Ungültige Wahl. Bitte 1, 2, 3 oder 4 eingeben.")
     
     print(f"\nPrüfe {len(zu_pruefende_ids)} Tickets auf geschlossene Tickets...")
     print(f"(Filter: Status='Geschlossen' UND Kategorie in {ERLAUBTE_KATEGORIEN})")
@@ -350,9 +628,12 @@ def exportiere_relevante_tickets():
     geschaetzte_zeit = len(zu_pruefende_ids) * 0.3
     print(f"Geschätzte Dauer: {geschaetzte_zeit/60:.1f} Minuten")
     
-    if input("Fortfahren? (j/n): ").lower() not in ['j', 'ja']:
-        print("Abgebrochen.")
-        return
+    if not auto_confirm:
+        if input("Fortfahren? (j/n): ").lower() not in ['j', 'ja']:
+            print("Abgebrochen.")
+            return
+    else:
+        print("Fortfahren? (j/n): j (via --yes)")
     
     # 2. Lade relevante Daten nur für geschlossene Tickets mit detaillierter Fehlersammlung
     geschlossene_tickets = []
@@ -523,7 +804,14 @@ def teste_einzelticket(ticket_id):
     """Testet die Extraktion für ein einzelnes Ticket"""
     print(f"=== TEST RELEVANTE FELDER FÜR TICKET {ticket_id} ===\n")
     
-    daten = extrahiere_relevante_daten(ticket_id)
+    # Echte TicketID auflösen, falls eine IssueID übergeben wurde
+    basis = hole_ticket_basis_daten(ticket_id)
+    echte_ticket_id = ticket_id
+    if isinstance(basis, dict):
+        echte_ticket_id = basis.get('TicketID') or ticket_id
+    if echte_ticket_id != ticket_id:
+        print(f"Hinweis: übergebene ID {ticket_id} ist vermutlich IssueID; verwende TicketID {echte_ticket_id} für Kommentare/Anhänge.")
+    daten = extrahiere_relevante_daten(echte_ticket_id)
     
     if daten:
         print("✅ Geschlossenes Ticket gefunden!")
@@ -531,7 +819,9 @@ def teste_einzelticket(ticket_id):
         print(f"Kategorie: {daten['CategoryName']}")
         print(f"Status: {daten['Status']}")
         print(f"Kommentare: {len(daten['kommentare'])}")
-        print(f"Anhänge: {len(daten['Attachments'])}")
+        total_comment_atts = sum(len((c.get('Attachments') or [])) for c in daten['kommentare'])
+        print(f"Anhänge (Ticket): {len(daten['Attachments'])}")
+        print(f"Anhänge (Kommentare): {total_comment_atts}")
         
         # JSON-Export
         filename = f'ticket_{ticket_id}_relevant.json'
@@ -550,13 +840,35 @@ if __name__ == "__main__":
     print("Felder: ticket_id, CategoryName, IssueDate, Subject, Body, Attachments, Status, kommentare\n")
     
     try:
+        # CLI non-interactive flags
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument('--all', dest='cli_all', action='store_true', help='Alle Tickets prüfen (geschlossene exportieren)')
+        parser.add_argument('--first', dest='cli_first', type=int, help='Nur die ersten N Tickets prüfen')
+        parser.add_argument('--start-id', dest='cli_start_id', type=int, help='Ab bestimmter Ticket-ID beginnen')
+        parser.add_argument('--yes', dest='cli_yes', action='store_true', help='Bestätigt die Ausführung ohne Rückfrage')
+        args, _unknown = parser.parse_known_args()
+
+        # If any non-interactive scope flag is provided, run export directly and exit
+        if args.cli_all or (args.cli_first is not None) or (args.cli_start_id is not None):
+            if args.cli_all:
+                exportiere_relevante_tickets(scope_mode='all', auto_confirm=args.cli_yes)
+            elif args.cli_first is not None:
+                exportiere_relevante_tickets(scope_mode='first', first_n=args.cli_first, auto_confirm=args.cli_yes)
+            elif args.cli_start_id is not None:
+                exportiere_relevante_tickets(scope_mode='start', start_ticket_id=args.cli_start_id, auto_confirm=args.cli_yes)
+            raise SystemExit(0)
+
         print("Optionen:")
         print("1) Alle verfügbaren Tickets prüfen und geschlossene exportieren")
         print("2) Einzelnes Ticket testen (ID 23480)")
         print("3) Einzelnes Ticket testen (ID 22596)")
         print("4) Benutzerdefinierte Ticket-ID testen")
+        print("5) DEBUG: Anhänge prüfen (Ticket 23480)")
+        print("6) DEBUG: Anhänge prüfen (benutzerdefinierte Ticket-ID)")
+        print("\nHinweis: Nach Option 1 folgt eine zweite Auswahl (1–4) für den Umfang.")
+        print("Wählen Sie dort 1 für alle Tickets oder 3 für einen schnellen Test, und bestätigen Sie anschließend mit 'j', damit die JSON-Datei geschrieben wird.")
         
-        wahl = input("Ihre Wahl (1-4): ").strip()
+        wahl = input("Ihre Wahl (1-6): ").strip()
         
         if wahl == '1':
             exportiere_relevante_tickets()
@@ -568,6 +880,14 @@ if __name__ == "__main__":
             ticket_id = input("Ticket-ID eingeben: ").strip()
             if ticket_id.isdigit():
                 teste_einzelticket(int(ticket_id))
+            else:
+                print("Ungültige Ticket-ID.")
+        elif wahl == '5':
+            debug_attachments(23480)
+        elif wahl == '6':
+            ticket_id = input("Ticket-ID für Debug eingeben: ").strip()
+            if ticket_id.isdigit():
+                debug_attachments(int(ticket_id))
             else:
                 print("Ungültige Ticket-ID.")
         else:
