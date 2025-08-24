@@ -13,13 +13,14 @@ Purpose:
 - Connect to your Jitbit instance, paginate through tickets, resolve real TicketIDs, and export closed tickets in selected categories to JitBit_relevante_Tickets.json with all relevant fields, including the entire conversation (kommentare) and attachments.
 
 Configuration:
-- Open ticket_relevante_felder.py and adjust:
-  - api_token — Your Jitbit API token (Bearer token)
+- Create a .env file and set:
+  - JITBIT_API_TOKEN=your_jitbit_bearer_token
+- In ticket_relevante_felder.py adjust:
   - jitbit_url — Base URL to your Jitbit installation (e.g., https://support.example.com)
   - ERLAUBTE_KATEGORIEN — Allowed categories list, e.g.: ["Allgemeine Frage", "Fehlermeldung", "Sonstiges"]
 
 Security:
-- Do not commit real tokens. Keep ticket_relevante_felder.py private or refactor to load from .env. Ensure .gitignore prevents secrets from being committed.
+- Do not commit real tokens. Store JITBIT_API_TOKEN only in your local .env and ensure .gitignore excludes it. Never commit .env.
 
 API Endpoints used:
 - GET /helpdesk/api/Tickets?count={batch_size}&offset={offset}
@@ -50,6 +51,18 @@ python3 ticket_relevante_felder.py
   - Process a subset, the first 10, or start from a given TicketID
 - Output file: JitBit_relevante_Tickets.json
 - The script prints stats and error diagnostics (HTTP errors, excluded categories, not-closed statuses). It also offers debug options in the interactive menu to inspect attachment API responses and extracted links for a specific ticket (e.g., ticket 23480 or a custom ID).
+
+Non-interactive CLI (headless runs):
+```
+# Export all (closed + allowed categories) without prompts
+python3 ticket_relevante_felder.py --all --yes
+
+# Export only the first N tickets checked (closed + allowed categories)
+python3 ticket_relevante_felder.py --first 100 --yes
+
+# Start from a specific TicketID
+python3 ticket_relevante_felder.py --start-id 23000 --yes
+```
 
 Test single ticket:
 ```
