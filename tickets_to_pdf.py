@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Generate a PDF from Ticket_Data.JSON with one page per ticket.
+Generate a DOCX from Ticket_Data.JSON with one page per ticket.
 
 What this script does:
 - Reads a top-level JSON array of tickets with keys:
   ticket_id, date, subject, problem, solution, image_urls
-- Renders one ticket per page:
-  - Subject as title
+- Renders one ticket per page into a .docx file:
+  - Subject as heading
   - "Problem" section
-  - "Solution" section
-  - Images listed in image_urls embedded below text
+  - "Lösung" section
+  - Images listed in image_urls embedded below "Problem" (optional)
 - For Jitbit-protected images, uses API-first fetching with Bearer token:
     GET {base}/helpdesk/api/attachment?id={FileID}
   falling back to {base}/api/attachment?id=...
@@ -23,7 +23,7 @@ Usage:
            so we rely on JITBIT_BASE_URL to derive the API root.
 
   2) Run:
-     python tickets_to_pdf.py --input Ticket_Data.JSON --output Ticket_Data.PDF --verbose true
+     python tickets_to_pdf.py --input Ticket_Data.JSON --output Ticket_Data.docx --verbose true
 """
 
 import argparse
@@ -32,7 +32,7 @@ import json
 import os
 import re
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -40,154 +40,371 @@ try:
 except Exception:
     pass
 
-# Reuse helpers from kb_to_pdf.py for consistent behavior
-from kb_to_pdf import (  # type: ignore
-    build_stylesheet,
-    make_rl_image,
-    sanitize_url,
-    resolve_url,
-    extract_file_id_from_url,
-    derive_api_root,
-    JitbitFetcher,
-    add_image_placeholder,
-    str2bool,
-)
+from PIL import Image as PILImage
 
-from reportlab.lib.pagesizes import A4, LETTER
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Image as RLImage,
-    PageBreak,
-    ListFlowable,
-    ListItem,
-    KeepInFrame,
-)
-from reportlab.lib import colors
+# python-docx
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor, Emu
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
+# Lightweight helpers and fetcher (decoupled from ReportLab deps)
+import requests
+from urllib.parse import urljoin, urlparse, parse_qs
 
-def escape_text_preserve_simple_markup(s: str) -> str:
+def xml_safe(s: Optional[str]) -> str:
     """
-    Escape text for ReportLab Paragraph while preserving simple <b>...</b> tags.
+    Remove XML 1.0 illegal control characters (except TAB, LF, CR) that cause python-docx to fail.
     """
-    # Temporarily protect bold tags to avoid escaping them
-    s = s.replace("<b>", "___B_OPEN___").replace("</b>", "___B_CLOSE___")
-    # Escape XML special characters
-    s = (s.replace("&", "&")
-           .replace("<", "<")
-           .replace(">", ">"))
-    # Restore allowed tags
-    s = s.replace("___B_OPEN___", "<b>").replace("___B_CLOSE___", "</b>")
-    return s
+    if not s:
+        return ""
+    return re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]", "", s)
 
+def str2bool(v: str) -> bool:
+    return str(v).lower() in {"1", "true", "t", "yes", "y"}
 
-def apply_inline_bold(text: str) -> str:
+def sanitize_url(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    # Strip surrounding quotes
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1]
+    # Cut at first whitespace
+    s = s.split()[0]
+    # Remove any embedded tags
+    for ch in ("<", ">"):
+        pos = s.find(ch)
+        if pos != -1:
+            s = s[:pos]
+    return s or None
+
+def resolve_url(src: str, base: Optional[str]) -> Optional[str]:
+    if not src:
+        return None
+    src = src.strip()
+    if src.startswith("http://") or src.startswith("https://"):
+        return src
+    if base:
+        return urljoin(base.rstrip("/") + "/", src.lstrip("/"))
+    return None
+
+def extract_file_id_from_url(url_str: str) -> Optional[str]:
     """
-    Convert **bold** to <b>bold</b> (compatible with ReportLab's mini-HTML).
-    Non-greedy, does not span newlines.
+    Extracts a numeric FileID from typical Jitbit URLs:
+      - /helpdesk/File/Get/26355
+      - /helpdesk/File/Get?id=26355
+    Returns None if no numeric id present.
     """
-    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    try:
+        pu = urlparse(url_str)
+        # Query ?id=123
+        qs = parse_qs(pu.query or "")
+        if "id" in qs:
+            v = qs["id"][0]
+            if str(v).isdigit():
+                return str(v)
+        # Path segment
+        segs = [s for s in (pu.path or "").split("/") if s]
+        if segs:
+            last = segs[-1]
+            if last.isdigit():
+                return last
+    except Exception:
+        pass
+    return None
 
-
-def plain_text_to_flowables(text: str, styles, add_space_before: bool = False) -> List:
+def derive_api_root(api_base_url: Optional[str], env_base_url: Optional[str], verbose: bool = False) -> Optional[str]:
     """
-    Convert plain text (with optional **bold** and simple lists) into ReportLab flowables.
-    Supported lists:
-      - Unordered: lines starting with '-', '*', or '•'
-      - Ordered: lines starting with '1. ', '2) ', etc.
-    Paragraphs are separated by blank lines.
+    Derive the API root:
+      If api_base_url path contains '/helpdesk' -> {scheme}://{host}/helpdesk/api
+      Else -> {scheme}://{host}/api
+    Falls back to env_base_url if api_base_url is missing.
     """
-    fl: List = []
-    if not (text and text.strip()):
-        fl.append(Paragraph("(Kein Inhalt)", styles["body"]))
-        return fl
+    base = api_base_url or env_base_url
+    if not base:
+        return None
+    try:
+        pu = urlparse(base)
+        scheme = pu.scheme or "https"
+        netloc = pu.netloc
+        path = (pu.path or "").lower()
+        if not netloc:
+            return None
+        if "/helpdesk" in path:
+            root = f"{scheme}://{netloc}/helpdesk/api"
+        else:
+            root = f"{scheme}://{netloc}/api"
+        if verbose:
+            print(f"[INFO] API root derived: {root}", file=sys.stderr)
+        return root
+    except Exception:
+        return None
 
-    if add_space_before:
-        fl.append(Spacer(1, 6))
+class JitbitFetcher:
+    def __init__(self, api_root: Optional[str], token: Optional[str], timeout: float = 15.0, verbose: bool = False):
+        self.api_root = api_root
+        self.token = token
+        self.timeout = timeout
+        self.verbose = verbose
 
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Tickets-DOCX/1.0",
+            "Accept": "*/*",
+        })
+        if token:
+            self.session.headers["Authorization"] = f"Bearer {token}"
+
+    def _warn(self, msg: str):
+        if self.verbose:
+            print(msg, file=sys.stderr)
+
+    def fetch_attachment_by_id(self, file_id: str) -> Optional[bytes]:
+        """
+        Fetches an attachment by FileID trying the correct API root(s).
+        Many Jitbit installs live under '/helpdesk', so we try:
+          1) {scheme}://{host}/helpdesk/api/attachment?id=...
+          2) {scheme}://{host}/api/attachment?id=...
+        We prioritize any '/helpdesk' root if self.api_root includes it.
+        """
+        if not self.api_root or not self.token:
+            self._warn(f"[WARN] Missing API root or token for Jitbit attachment id={file_id}")
+            return None
+
+        try:
+            p = urlparse(self.api_root)
+            scheme = p.scheme or "https"
+            netloc = p.netloc
+            path = (p.path or "").lower()
+            if not netloc:
+                self._warn(f"[WARN] Invalid api_root (no host): {self.api_root}")
+                return None
+
+            candidates = []
+            # Prioritize '/helpdesk/api' if api_root path mentions helpdesk
+            if "/helpdesk" in path:
+                candidates.append(f"{scheme}://{netloc}/helpdesk/api")
+            # Always try '/helpdesk/api' first for safety if not already present
+            if f"{scheme}://{netloc}/helpdesk/api" not in candidates:
+                candidates.append(f"{scheme}://{netloc}/helpdesk/api")
+            # Then plain '/api'
+            candidates.append(f"{scheme}://{netloc}/api")
+
+            last_err: Optional[Exception] = None
+            for root in candidates:
+                url = f"{root.rstrip('/')}/attachment?id={file_id}"
+                try:
+                    self._warn(f"[INFO] GET {url}")
+                    r = self.session.get(url, timeout=self.timeout)
+                    r.raise_for_status()
+                    return r.content
+                except Exception as e:
+                    last_err = e
+                    self._warn(f"[INFO] Candidate failed: {e}")
+                    continue
+
+            if last_err:
+                self._warn(f"[WARN] API fetch failed for id={file_id}: {last_err}")
+            return None
+        except Exception as e:
+            self._warn(f"[WARN] API fetch failed for id={file_id}: {e}")
+            return None
+
+    def fetch_generic_image(self, url: str) -> Optional[bytes]:
+        try:
+            self._warn(f"[INFO] GET (external) {url}")
+            r = self.session.get(url, timeout=self.timeout)
+            r.raise_for_status()
+            # Validate image
+            with PILImage.open(io.BytesIO(r.content)) as _:
+                pass
+            return r.content
+        except Exception as e:
+            self._warn(f"[WARN] External image fetch failed for {url}: {e}")
+            return None
+
+
+# ---- Page setup helpers ----
+
+A4_INCH = (8.27, 11.69)
+LETTER_INCH = (8.5, 11.0)
+
+
+def set_page_size_and_margins(doc: Document, page: str, margin_pt: float) -> None:
+    """
+    Configure the document's first section to the requested page size and margins.
+    margin_pt is in points (1/72 inch).
+    """
+    section = doc.sections[0]
+
+    if page.upper() == "A4":
+        w_in, h_in = A4_INCH
+    else:
+        w_in, h_in = LETTER_INCH
+
+    section.page_width = Inches(w_in)
+    section.page_height = Inches(h_in)
+
+    m_in = float(margin_pt) / 72.0
+    section.left_margin = Inches(m_in)
+    section.right_margin = Inches(m_in)
+    section.top_margin = Inches(m_in)
+    section.bottom_margin = Inches(m_in)
+
+
+def get_usable_emu(doc: Document) -> Tuple[int, int]:
+    """
+    Return (usable_width_emu, usable_height_emu) for the first section.
+    """
+    s = doc.sections[0]
+    usable_w = int(s.page_width - s.left_margin - s.right_margin)
+    usable_h = int(s.page_height - s.top_margin - s.bottom_margin)
+    return usable_w, usable_h
+
+
+# ---- Text rendering helpers ----
+
+_bullet_re = re.compile(r"^\s*[-\*\u2022]\s+(.*)")  # -, *, •
+_ordered_re = re.compile(r"^\s*(\d+)[\.\)]\s+(.*)")  # 1. or 1)
+
+
+def _iter_runs_from_markup(text: str):
+    """
+    Yields (segment, is_bold) by converting **bold** and <b>...</b> to runs.
+    """
+    if not text:
+        return
+    text = xml_safe(text)
+    # normalize windows line breaks to avoid surprises
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Convert simple HTML bold to **bold** (handles escaped <b> too)
+    text = re.sub(r"<b>(.*?)</b>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<b>(.*?)</b>", r"**\1**", text, flags=re.IGNORECASE | re.DOTALL)
+
+    pattern = re.compile(r"\*\*(.+?)\*\*")
+    pos = 0
+    for m in pattern.finditer(text):
+        if m.start() > pos:
+            yield text[pos:m.start()], False
+        yield m.group(1), True
+        pos = m.end()
+    if pos < len(text):
+        yield text[pos:], False
+
+
+def add_paragraph_with_inline_formatting(doc: Document, text: str, style: Optional[str] = None, color_rgb: Optional[RGBColor] = None):
+    """
+    Adds a paragraph to doc, splitting 'text' into bold/non-bold runs based on **...** or <b>...</b>.
+    Returns the created paragraph.
+    """
+    p = doc.add_paragraph()
+    if style:
+        p.style = style
+    for seg, is_bold in _iter_runs_from_markup(text or ""):
+        run = p.add_run(seg)
+        run.bold = bool(is_bold)
+        if color_rgb is not None:
+            run.font.color.rgb = color_rgb
+    return p
+
+
+def add_plain_text_block(doc: Document, text: str):
+    """
+    Convert plain text with paragraphs separated by blank lines.
+    Supports simple unordered (-, *, •) and ordered (1., 2)) lists.
+    Also supports **bold** inline.
+    """
+    if not (text and str(text).strip()):
+        doc.add_paragraph("(Kein Inhalt)")
+        return
+
+    lines = str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
     i = 0
+    n = len(lines)
 
-    bullet_re = re.compile(r"^\s*[-\*\u2022]\s+(.*)")  # -, *, •
-    ordered_re = re.compile(r"^\s*(\d+)[\.\)]\s+(.*)")  # 1. or 1)
-
-    def make_paragraph(txt: str):
-        # Apply **bold** then escape while preserving <b> tags
-        txt = apply_inline_bold(txt)
-        txt = escape_text_preserve_simple_markup(txt)
-        return Paragraph(txt, styles["body"])
-
-    while i < len(lines):
-        # Skip leading blank lines
-        if not lines[i].strip():
+    while i < n:
+        # skip blank lines
+        while i < n and not lines[i].strip():
             i += 1
-            continue
+        if i >= n:
+            break
 
-        # Detect list block
-        m_b = bullet_re.match(lines[i])
-        m_o = ordered_re.match(lines[i])
-
+        # detect list block
+        m_b = _bullet_re.match(lines[i])
+        m_o = _ordered_re.match(lines[i])
         if m_b or m_o:
-            items: List = []
             is_ordered = bool(m_o)
-
-            while i < len(lines):
-                if is_ordered:
-                    m = ordered_re.match(lines[i])
-                    if not m:
-                        break
-                    content = m.group(2)
-                else:
-                    m = bullet_re.match(lines[i])
-                    if not m:
-                        break
-                    content = m.group(1)
-
-                items.append(ListItem(make_paragraph(content)))
+            style = "List Number" if is_ordered else "List Bullet"
+            while i < n:
+                mb = _bullet_re.match(lines[i])
+                mo = _ordered_re.match(lines[i])
+                if is_ordered and not mo:
+                    break
+                if (not is_ordered) and not mb:
+                    break
+                content = (mo.group(2) if mo else mb.group(1)).strip()
+                p = add_paragraph_with_inline_formatting(doc, content)
+                p.style = style
                 i += 1
-
-            if items:
-                fl.append(Spacer(1, 4))
-                fl.append(ListFlowable(
-                    items,
-                    bulletType="1" if is_ordered else "bullet",
-                    start="1",
-                    leftIndent=12,
-                ))
-                fl.append(Spacer(1, 4))
             continue
 
-        # Otherwise accumulate a paragraph until blank line or next list
-        para_lines = []
-        while i < len(lines):
+        # otherwise accumulate a paragraph until blank or next list
+        para_lines: List[str] = []
+        while i < n:
             if not lines[i].strip():
                 i += 1
                 break
-            if bullet_re.match(lines[i]) or ordered_re.match(lines[i]):
+            if _bullet_re.match(lines[i]) or _ordered_re.match(lines[i]):
                 break
             para_lines.append(lines[i].strip())
             i += 1
 
         paragraph_text = " ".join(para_lines).strip()
         if paragraph_text:
-            fl.append(make_paragraph(paragraph_text))
-
-    return fl
+            add_paragraph_with_inline_formatting(doc, paragraph_text)
 
 
-def add_ticket_images(
+# ---- Image helpers ----
+
+def _bytes_to_image_dims_emu(img_bytes: bytes) -> Optional[Tuple[int, int]]:
+    """
+    Returns (width_emu, height_emu) using image DPI metadata if available, else assumes 96 DPI.
+    """
+    try:
+        with PILImage.open(io.BytesIO(img_bytes)) as im:
+            w_px, h_px = im.width, im.height
+            dpi = im.info.get("dpi", (96, 96))
+            dpi_x = float(dpi[0] or 96.0)
+            dpi_y = float(dpi[1] or 96.0)
+            w_in = w_px / dpi_x
+            h_in = h_px / dpi_y
+            return int(Emu(Inches(w_in))), int(Emu(Inches(h_in)))
+    except Exception:
+        return None
+
+
+def add_image_placeholder_docx(doc: Document, url: str, auth_hint: bool = False, label: Optional[str] = None):
+    safe_url = xml_safe(str(url or "").strip())
+    label_text = f"{label} – " if label else ""
+    hint_text = " (evtl. Anmeldung/Cookies erforderlich)" if auth_hint else ""
+    p = doc.add_paragraph()
+    run = p.add_run(xml_safe(f"{label_text}Bild konnte nicht geladen werden: {safe_url}{hint_text}"))
+    run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+
+
+def add_ticket_images_docx(
+    doc: Document,
     image_urls: List[str],
     kb_base_url: Optional[str],
     fetcher: JitbitFetcher,
-    max_width: float,
-    max_height: float,
+    max_width_emu: int,
+    max_height_emu: int,
     add_placeholders: bool,
-    styles=None,
-) -> List:
-    fl: List = []
+) -> None:
     if not image_urls:
-        return fl
+        return
 
     for raw in image_urls:
         if not raw:
@@ -202,28 +419,50 @@ def add_ticket_images(
         if fid:
             data = fetcher.fetch_attachment_by_id(fid)
         if not data:
-            # Try generic fetch for external or fallback
             if abs_url.startswith("http://") or abs_url.startswith("https://"):
                 data = fetcher.fetch_generic_image(abs_url)
 
         if not data:
-            add_image_placeholder(fl, abs_url, styles, add_placeholders, auth_hint=bool(fid))
+            if add_placeholders:
+                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
             continue
 
-        img: Optional[RLImage] = make_rl_image(data, max_width=max_width, max_height=max_height)
-        if img:
-            # Wrap in KeepInFrame to avoid LayoutError when near page bottom; shrink if needed
-            kif = KeepInFrame(max_width, max_height, [img], mode="shrink")
-            fl.append(kif)
-            fl.append(Spacer(1, 6))
-        else:
-            add_image_placeholder(fl, abs_url, styles, add_placeholders, auth_hint=bool(fid))
+        dims = _bytes_to_image_dims_emu(data)
+        if not dims:
+            if add_placeholders:
+                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+            continue
 
-    return fl
+        w_emu, h_emu = dims
+        if w_emu <= 0 or h_emu <= 0:
+            if add_placeholders:
+                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+            continue
+
+        scale = min(max_width_emu / w_emu, max_height_emu / h_emu, 1.0)
+        target_w = int(w_emu * scale)
+        # python-docx scales height proportionally when width is provided
+        bio = io.BytesIO(data)
+        try:
+            doc.add_picture(bio, width=Emu(target_w))
+        except Exception:
+            if add_placeholders:
+                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+            continue
 
 
-def build_flow_for_tickets(tickets_subset: List[dict], styles, usable_width: float, usable_height: float, env_base: Optional[str], fetcher: JitbitFetcher, args) -> List:
-    flow: List = []
+# ---- Ticket rendering ----
+
+def build_doc_for_tickets(
+    doc: Document,
+    tickets_subset: List[dict],
+    env_base: Optional[str],
+    fetcher: JitbitFetcher,
+    include_images: bool,
+    add_placeholders: bool,
+) -> None:
+    usable_w_emu, usable_h_emu = get_usable_emu(doc)
+
     for idx, t in enumerate(tickets_subset, start=1):
         subject = (t.get("subject") or "").strip() or "(Ohne Betreff)"
         problem = (t.get("problem") or "").rstrip()
@@ -231,69 +470,72 @@ def build_flow_for_tickets(tickets_subset: List[dict], styles, usable_width: flo
         image_urls = t.get("image_urls") or []
 
         # Header
-        flow.append(Paragraph(subject, styles["title"]))
+        title_p = doc.add_paragraph(xml_safe(subject))
+        title_p.style = "Heading 1"
+
+        # Meta line
         meta_parts = []
         if t.get("ticket_id") is not None:
             meta_parts.append(f"Ticket-ID: {t['ticket_id']}")
         if t.get("date"):
             meta_parts.append(str(t["date"]))
         if meta_parts:
-            flow.append(Paragraph(" • ".join(meta_parts), styles["subheader"]))
+            p = add_paragraph_with_inline_formatting(doc, " • ".join(meta_parts))
+            for run in p.runs:
+                run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
         else:
-            flow.append(Spacer(1, 6))
+            doc.add_paragraph()  # spacer
 
         # Problem section
-        flow.append(Paragraph("Problem", styles["subheader"]))
-        flow.extend(plain_text_to_flowables(problem, styles))
+        h = doc.add_paragraph("Problem")
+        h.style = "Heading 2"
+        add_plain_text_block(doc, problem)
 
         # Images (after Problem)
-        if args.include_images:
-            img_fl = add_ticket_images(
+        if include_images:
+            add_ticket_images_docx(
+                doc=doc,
                 image_urls=image_urls,
                 kb_base_url=env_base,
                 fetcher=fetcher,
-                max_width=usable_width,
-                max_height=usable_height,
-                add_placeholders=args.image_placeholder,
-                styles=styles,
+                max_width_emu=usable_w_emu,
+                max_height_emu=usable_h_emu,
+                add_placeholders=add_placeholders,
             )
-            if img_fl:
-                flow.append(Spacer(1, 6))
-                flow.extend(img_fl)
 
         # Solution section
-        flow.append(Spacer(1, 6))
-        flow.append(Paragraph("Lösung", styles["subheader"]))
-        flow.extend(plain_text_to_flowables(solution, styles))
+        doc.add_paragraph()  # small spacer
+        h2 = doc.add_paragraph("Lösung")
+        h2.style = "Heading 2"
+        add_plain_text_block(doc, solution)
 
-        # Page break between tickets within this subset
+        # Page break between tickets in this subset
         if idx != len(tickets_subset):
-            flow.append(PageBreak())
-    return flow
+            doc.add_page_break()
+
+
+# ---- CLI ----
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a PDF from ticket JSON (API-first image fetching).")
+    parser = argparse.ArgumentParser(description="Generate a DOCX from ticket JSON (API-first image fetching).")
     parser.add_argument("--input", "-i", default="Ticket_Data.JSON", help="Path to JSON file with an array of tickets")
-    parser.add_argument("--output", "-o", default="Ticket_Data.PDF", help="Output PDF filename")
+    parser.add_argument("--output", "-o", default="Ticket_Data.docx", help="Output DOCX filename")
     parser.add_argument("--page-size", choices=["A4", "LETTER"], default="A4", help="Page size")
     parser.add_argument("--margin", type=float, default=36.0, help="Margins in points (default ~0.5 inch)")
     parser.add_argument("--include-images", type=str2bool, default=True, help="Include images from image_urls[]")
     parser.add_argument("--timeout", type=float, default=15.0, help="HTTP timeout seconds for API/generic image downloads")
-    parser.add_argument("--image-placeholder", type=str2bool, default=True, help="Insert a textual placeholder with link when image download fails")
+    parser.add_argument("--image-placeholder", type=str2bool, default=True, help="Insert a textual placeholder when image download fails")
     parser.add_argument("--verbose", type=str2bool, default=False, help="Enable verbose logging")
     parser.add_argument("--base-url", default=None, help="Base URL to resolve relative links and derive API root (overrides JITBIT_BASE_URL)")
     parser.add_argument("--token", default=None, help="Bearer token for Jitbit API (overrides JITBIT_API_TOKEN)")
-    parser.add_argument("--chunk-size", type=int, default=50, help="Max number of tickets per PDF chunk (default 50). Use 0 or negative to disable chunking.")
+    parser.add_argument("--chunk-size", type=int, default=50, help="Max number of tickets per DOCX chunk (default 50). Use 0 or negative to disable chunking.")
     args = parser.parse_args()
-
-    pagesize = A4 if args.page_size.upper() == "A4" else LETTER
 
     # Load JSON (top-level array)
     with open(args.input, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     if isinstance(data, dict):
-        # Some exports might wrap tickets in a key
         tickets = data.get("tickets") or data.get("data") or []
         if not isinstance(tickets, list):
             print("[WARN] Input JSON is an object but no 'tickets' array found. Expecting a top-level array.", file=sys.stderr)
@@ -315,9 +557,6 @@ def main():
 
     fetcher = JitbitFetcher(api_root=api_root, token=token, timeout=args.timeout, verbose=args.verbose)
 
-    # Build document(s) with chunking
-    styles = build_stylesheet()
-
     # Determine chunks
     chunk_size = int(args.chunk_size) if isinstance(args.chunk_size, int) else 0
     if chunk_size <= 0 or not tickets:
@@ -327,7 +566,7 @@ def main():
 
     root, ext = os.path.splitext(args.output)
     if not ext:
-        ext = ".pdf"
+        ext = ".docx"
 
     for ci, subset in enumerate(chunks, start=1):
         if len(chunks) == 1:
@@ -335,22 +574,19 @@ def main():
         else:
             out_file = f"{root}_{ci:03d}{ext}"
 
-        doc = SimpleDocTemplate(
-            out_file,
-            pagesize=pagesize,
-            leftMargin=args.margin,
-            rightMargin=args.margin,
-            topMargin=args.margin,
-            bottomMargin=args.margin,
-            title="Ticket Export",
-            author="Jitbit Tickets (API-first)",
-        )
-        usable_width = doc.width
-        usable_height = doc.height
+        doc = Document()
+        set_page_size_and_margins(doc, args.page_size, args.margin)
 
-        flow = build_flow_for_tickets(subset, styles, usable_width, usable_height, env_base, fetcher, args)
-        doc.build(flow)
-        print(f"[OK] PDF generated: {out_file}")
+        build_doc_for_tickets(
+            doc=doc,
+            tickets_subset=subset,
+            env_base=env_base,
+            fetcher=fetcher,
+            include_images=args.include_images,
+            add_placeholders=args.image_placeholder,
+        )
+        doc.save(out_file)
+        print(f"[OK] DOCX generated: {out_file}")
 
 
 if __name__ == "__main__":

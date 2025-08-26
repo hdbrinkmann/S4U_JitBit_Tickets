@@ -425,3 +425,89 @@ Notes & troubleshooting:
   - Use --verbose to inspect Content-Type and warnings.
 - The script retries once on transient download errors.
 - For authenticated sites with aggressive CSRF or dynamic tokens, consider exporting a cookies.txt immediately after logging-in and re-running quickly.
+
+------------------------------------------------------------
+## 4) Render Ticket summaries to DOCX (tickets_to_pdf.py)
+
+Purpose:
+- Convert Ticket_Data.JSON into a .docx document with one ticket per page:
+  - Subject as heading
+  - Meta line with Ticket-ID and date
+  - "Problem" and "Lösung" sections
+  - Optional inline images from image_urls (API-first for Jitbit-protected attachments)
+
+Dependencies:
+- Added: python-docx (already listed in requirements.txt)
+
+Basic usage:
+```
+python3 tickets_to_pdf.py -i Ticket_Data.JSON -o Ticket_Data.docx
+```
+
+Options:
+- --page-size A4|LETTER (default A4)
+- --margin POINTS (default 36 ≈ 0.5")
+- --include-images true|false (default true)
+- --image-placeholder true|false (default true)
+- --chunk-size N (default 50; splits output into multiple files Ticket_Data_001.docx, etc.)
+- --base-url, --token override env JITBIT_BASE_URL, JITBIT_API_TOKEN
+- --verbose true|false
+
+Authentication for protected images:
+- Set JITBIT_API_TOKEN in .env and JITBIT_BASE_URL to your instance base (e.g., https://support.example.com/helpdesk).
+- The script resolves relative URLs and fetches attachments via /helpdesk/api/attachment?id=... (falls back to /api/attachment?id=...).
+
+Formatting notes:
+- Supports simple inline bold using **bold** or <b>bold</b> in Problem/Solution text.
+- Simple lists are supported when lines start with -, *, • or 1., 2).
+
+Example:
+```
+python3 tickets_to_pdf.py --input Ticket_Data.JSON --output Ticket_Data.docx --include-images true --verbose true
+```
+
+------------------------------------------------------------
+## 5) Render Jitbit Knowledgebase JSON to a single DOCX (kb_to_pdf.py)
+
+Purpose:
+- Convert a Jitbit Knowledgebase export (JSON) into a single, nicely formatted DOCX (one article per page) with:
+  - Subject as title
+  - Category and TagString as subheader
+  - Converted Body HTML (paragraphs, lists, code/pre, simple tables, inline images)
+  - Attachment images rendered after the body
+  - Relative URLs resolved via export_info.api_base_url or JITBIT_BASE_URL
+
+Dependencies:
+```
+pip3 install -U python-docx beautifulsoup4 requests pillow python-dotenv
+```
+
+Basic usage:
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.docx
+```
+
+Authentication for protected images (API token):
+- Set JITBIT_API_TOKEN in .env and optionally JITBIT_BASE_URL to your instance base (e.g., https://support.example.com/helpdesk).
+- The script resolves relative URLs and fetches attachments via /helpdesk/api/attachment?id=... (falls back to /api/attachment?id=...).
+- Cookie/Referer-based fetching is not used in this DOCX script.
+
+Flags and behavior:
+- --include-body-images true|false
+  - Include inline <img> from Body HTML. Default: true
+- --include-attachments true|false
+  - Include images listed in the Attachments array. Default: true
+- --attachments-header true|false
+  - Print a small “Anhänge” heading before attachment images. Default: false
+- --timeout SECONDS
+  - HTTP timeout per image. Default: 15.0
+- --image-placeholder true|false
+  - Insert a textual placeholder with a link when an image fails to load. Default: true
+- --verbose true|false
+  - Log image requests and decisions to stderr.
+
+Notes & troubleshooting:
+- If placeholders appear for protected images:
+  - Ensure JITBIT_API_TOKEN and JITBIT_BASE_URL are set correctly.
+  - Run with --verbose to inspect fetch attempts and decisions.
+- Duplicate suppression for attachments is per article by normalized URL.
