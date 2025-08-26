@@ -241,6 +241,7 @@ If the ticket is not relevant, set:
 Do not include any URLs in the JSON. The system will extract URLs separately.
 
 IMPORTANT LANGUAGE INSTRUCTIONS: ALWAYS USE THE LANGUAGE OF THE TICKET (e.g., if the ticket is in German, respond in German).
+IMPORTANT DATA PROTECTION INSTRUCTIONS: Do not include any personal data, email addresses, or names in the output. YOU ABSOLUTELY MUST anonymize any such information from the problem and solution fields!
 
 """
 

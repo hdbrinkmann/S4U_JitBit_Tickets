@@ -312,3 +312,116 @@ Repository outputs:
 - JitBit_relevante_Tickets.json — Produced by ticket_relevante_felder.py (exporter).
 - Ticket_Data.JSON — Produced by process_tickets_with_llm.py (relevant summaries).
 - not relevant.json — Produced by process_tickets_with_llm.py (raw not-relevant tickets).
+
+------------------------------------------------------------
+## 3) Render Jitbit Knowledgebase JSON to a single PDF (kb_to_pdf.py)
+
+Purpose:
+- Convert a Jitbit Knowledgebase export (JSON) into a single, nicely formatted PDF (one article per page) with:
+  - Subject as title
+  - Category and TagString as subheader
+  - Converted Body HTML (paragraphs, lists, code/pre, simple tables, inline images)
+  - Attachment images rendered after the body
+  - Relative URLs resolved via export_info.api_base_url
+
+Dependencies:
+```
+pip3 install -U reportlab beautifulsoup4 requests pillow
+```
+
+Basic usage:
+```
+# Unauthenticated (public images only)
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf
+```
+
+Authentication for protected images (recommended for Jitbit):
+Many Jitbit instances require authentication to fetch /helpdesk/File/Get/... images (both inline Body & Attachments).
+Pass either a cookie header or a cookies file and an appropriate Referer.
+
+Option A: Use browser cookies as a single header
+1) Log into your Jitbit in the browser.
+2) Open DevTools → Application/Storage → Cookies for your Jitbit domain.
+3) Copy relevant cookies (e.g., ASP.NET_SessionId, .ASPXAUTH, jitbitkb).
+4) Run:
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf \
+  --cookie "ASP.NET_SessionId=...; .ASPXAUTH=...; jitbitkb=..." \
+  --header "Referer: https://support.example.com/"
+```
+
+Option B: Use a cookies.txt file (Netscape/Mozilla format)
+- Export cookies (for the Jitbit domain) as a standard cookies.txt. Several browser extensions can do this (e.g., “Export cookies.txt”).
+- Then:
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf \
+  --cookies-file cookies.txt \
+  --header "Referer: https://support.4plan.de/"
+```
+
+Flags and behavior:
+- --include-body-images true|false
+  - Include inline <img> from Body HTML. Default: true
+- --include-attachments true|false
+  - Include images listed in the Attachments array. Default: true
+- --attachments-header true|false
+  - Print a small “Anhänge” heading before attachment images. Default: false
+- --timeout SECONDS
+  - HTTP timeout per image. Default: 12.0
+- --require-image-content-type true|false
+  - Skip any download whose Content-Type is not image/* (avoids embedding bad responses). Default: false
+- --image-placeholder true|false
+  - Insert a textual placeholder with a link when an image fails to load. Default: true
+- --cookie "name=value; ...", --header "Name: Value", --headers-file headers.json
+  - Additional auth/headers to pass to requests.
+- --cookies-file PATH
+  - Load cookies from a Netscape cookies.txt file (merges into the session).
+- --verbose true|false
+  - Log each image request and decisions to stderr. Helpful for diagnosing auth issues. Default: false
+
+Auth/Referer details:
+- The script automatically sets the HTTP Referer per article to the article’s Url (art["Url"]) while processing that article. Many Jitbit setups require a consistent Referer for /helpdesk/File/Get/… endpoints.
+- If you still get HTML login pages for image URLs, provide cookies as shown above.
+
+Duplicate suppression:
+- Attachment images are deduplicated per article by normalized URL.
+- Body and Attachments may still contain the same image — this will render twice if included in both; typically attachments are images referenced in the body, so consider --include-attachments false if you prefer only inline rendering.
+
+Placeholders and warnings:
+- When an image fails to load or the server returns an HTML login page, the script:
+  - Emits a warning to stderr (run with --verbose for more detail).
+  - Inserts a placeholder Paragraph with a clickable link to the image.
+  - Example warning:
+    “[WARN] HTML page returned for https://support.example.com/helpdesk/File/Get/26355. If this endpoint is protected, pass --cookie/--cookies-file and a proper Referer.”
+
+Examples:
+- Minimal (might show placeholders for protected images):
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf
+```
+
+- With cookie header and explicit Referer:
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf \
+  --cookie "ASP.NET_SessionId=...; .ASPXAUTH=...; jitbitkb=..." \
+  --header "Referer: https://support.4plan.de/" \
+  --attachments-header true --verbose true
+```
+
+- With cookies.txt and stricter content-type check:
+```
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.pdf \
+  --cookies-file cookies.txt \
+  --header "Referer: https://support.4plan.de/" \
+  --require-image-content-type true \
+  --attachments-header true --verbose true
+```
+
+Notes & troubleshooting:
+- Relative image URLs in Body (e.g., /helpdesk/File/Get/26355) are automatically resolved via export_info.api_base_url in the JSON.
+- If placeholders appear for protected images:
+  - Make sure you passed valid cookies for the same domain.
+  - Verify the Referer is correct (default per article; can be overridden with --header).
+  - Use --verbose to inspect Content-Type and warnings.
+- The script retries once on transient download errors.
+- For authenticated sites with aggressive CSRF or dynamic tokens, consider exporting a cookies.txt immediately after logging-in and re-running quickly.
