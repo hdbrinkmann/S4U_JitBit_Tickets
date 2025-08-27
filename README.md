@@ -1,10 +1,159 @@
 # S4U JitBit Tickets — Export and LLM Processing
 
-This repository contains two Python programs that work together to extract closed Jitbit tickets via API and transform them into concise, RAG‑friendly summaries using an LLM (Together.ai).
+This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM (Together.ai), and render them as PDF/DOCX documents.
 
-Programs:
-- ticket_relevante_felder.py — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
-- process_tickets_with_llm.py — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (now includes original Subject in the output summaries).
+## Main Programs:
+- **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
+- **process_tickets_with_llm.py** — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (includes original Subject in the output summaries).
+- **kb_export_json.py** — Exports Jitbit Knowledge Base articles as JSON with BBCode to Markdown conversion and attachment extraction.
+- **kb_to_pdf.py** — Renders Knowledge Base JSON to PDF format with images and formatting.
+- **tickets_to_pdf.py** — Converts ticket summaries to DOCX format.
+
+## Utility Scripts:
+- **scripts/jitbit_fetch_attachment.py** — Standalone utility to fetch individual Jitbit attachments via API.
+- **scripts/test_llm_parse_errors.py** — Test script for debugging LLM parsing issues.
+
+## Reference Files:
+- **sample_ticket_data.json** — Example ticket data format for testing.
+- **Process_with_LLM.md** — Design document describing the LLM processing approach.
+
+## Installation
+
+Install the required dependencies:
+
+```bash
+pip3 install -U reportlab beautifulsoup4 requests pillow python-dotenv python-docx ijson
+```
+
+Or use the provided requirements file:
+
+```bash
+pip3 install -r requirements.txt
+# Note: You may also want to install ijson for large file streaming support:
+pip3 install -U ijson
+```
+
+## Environment Setup
+
+Create a `.env` file in the repository root:
+
+```bash
+# Required for ticket/KB export and API operations
+JITBIT_API_TOKEN=your_jitbit_bearer_token_here
+JITBIT_BASE_URL=https://support.example.com
+
+# Required for LLM processing 
+TOGETHER_API_KEY=your_together_api_key_here
+
+# Optional LLM model override (defaults to Meta-Llama-3.1-70B-Instruct-Turbo)
+LLM_MODEL=meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+```
+
+**Security Note**: Never commit the `.env` file to version control. Ensure `.env` is included in your `.gitignore`.
+
+------------------------------------------------------------
+## 0) Export Jitbit Knowledge Base (kb_export_json.py)
+
+Purpose:
+- Export Jitbit Knowledge Base articles as JSON with comprehensive BBCode to Markdown conversion.
+- Extract attachments from both API endpoints and embedded HTML/BBCode content.
+- Support category filtering and incremental exports.
+- Convert BBCode formatting to Markdown while preserving text readability.
+
+Features:
+- **BBCode Processing**: Converts common BBCode tags ([b], [i], [code], [img], [url], etc.) to Markdown equivalents.
+- **Attachment Extraction**: Discovers attachments from API and embedded content (href/src attributes, plain URLs).
+- **Category Support**: Export all articles or filter by specific KB categories.
+- **Rate Limiting**: Built-in retry logic and gentle rate limiting to avoid API throttling.
+- **Robust URL Normalization**: Converts relative URLs to absolute using the Jitbit base URL.
+
+Configuration:
+- Set `JITBIT_API_TOKEN` and optionally `JITBIT_BASE_URL` in your `.env` file.
+- The script defaults to `https://support.4plan.de` but can be overridden via environment variables.
+
+Basic usage:
+
+```bash
+# Export all KB articles
+python3 kb_export_json.py --out JitBit_Knowledgebase.json --yes
+
+# Export specific category only  
+python3 kb_export_json.py --category-id 5 --out Category_5_KB.json --yes
+
+# Test run with first 10 articles
+python3 kb_export_json.py --first 10 --out KB_Sample.json --yes
+```
+
+Interactive mode:
+```bash
+python3 kb_export_json.py
+```
+
+CLI Options:
+- `--category-id N`: Export only articles from KB category N
+- `--first N`: Limit export to first N articles (for testing)
+- `--out PATH`: Output JSON file path (default: JitBit_Knowledgebase.json)
+- `--yes`: Skip confirmation prompts (useful for automated runs)
+
+Output Structure:
+```json
+{
+  "export_info": {
+    "timestamp": "2024-01-15 14:30:00",
+    "total_articles": 150,
+    "total_attachments": 75,
+    "api_base_url": "https://support.4plan.de",
+    "category_filter": null,
+    "limited_to_first_n": null,
+    "export_duration_seconds": 45.2
+  },
+  "articles": [
+    {
+      "ArticleId": 123,
+      "Subject": "How to configure XYZ",
+      "Body": "Cleaned plaintext content...",
+      "BodyMarkdown": "Markdown version with **formatting**...",
+      "ForTechsOnly": false,
+      "CategoryID": 5,
+      "CategoryName": "Configuration",
+      "TagString": "config, setup",
+      "Tags": ["config", "setup"],
+      "UrlId": "how-to-configure-xyz",
+      "DateCreated": "2023-12-01T10:00:00",
+      "LastUpdated": "2024-01-10T15:30:00", 
+      "Url": "https://support.4plan.de/kb/article/123",
+      "Attachments": [
+        {
+          "FileName": "screenshot.png",
+          "Url": "https://support.4plan.de/helpdesk/File/Get/456",
+          "Size": 125000
+        }
+      ]
+    }
+  ]
+}
+```
+
+BBCode Support:
+- `[b]bold[/b]` → `**bold**`
+- `[i]italic[/i]` → `_italic_`  
+- `[code]...[/code]` → ` ```...``` `
+- `[img]url[/img]` → `![](url)`
+- `[url]link[/url]` → `<link>`
+- `[url=link]text[/url]` → `[text](link)`
+- `[quote]...[/quote]` → blockquote format
+- List items `[*]` → `- ` (bullet points)
+
+API Endpoints Used:
+- `GET /helpdesk/api/Articles[?categoryId=N]` — Article overview
+- `GET /helpdesk/api/Article/{id}` — Detailed article data
+- `GET /helpdesk/api/categories` — Category enumeration
+
+Notes:
+- The export includes both cleaned plaintext (`Body`) and formatted Markdown (`BodyMarkdown`) versions.
+- Attachment discovery includes API attachments plus content extracted from HTML/BBCode in article bodies.
+- Articles are processed with a small delay (0.12s) to be respectful to the API.
+- Large exports may take several minutes depending on article count and attachment discovery.
 
 ------------------------------------------------------------
 ## 1) Export closed Jitbit tickets (ticket_relevante_felder.py)
@@ -511,3 +660,144 @@ Notes & troubleshooting:
   - Ensure JITBIT_API_TOKEN and JITBIT_BASE_URL are set correctly.
   - Run with --verbose to inspect fetch attempts and decisions.
 - Duplicate suppression for attachments is per article by normalized URL.
+
+------------------------------------------------------------
+## Utility Scripts
+
+### scripts/jitbit_fetch_attachment.py
+
+Purpose:
+- Standalone utility to fetch individual Jitbit attachment files via API using Bearer token authentication.
+- Useful for testing API access, downloading specific attachments, or troubleshooting attachment retrieval issues.
+- Supports automatic file extension detection based on Content-Type headers.
+
+Dependencies:
+- Requires: `requests`, `python-dotenv`
+- Optional: `pillow` (for image validation)
+
+Basic usage:
+```bash
+# Fetch attachment by FileID
+python3 scripts/jitbit_fetch_attachment.py 26355
+
+# Specify output filename
+python3 scripts/jitbit_fetch_attachment.py 26355 --out screenshot.png
+
+# Use custom base URL
+python3 scripts/jitbit_fetch_attachment.py 26355 --base-url https://support.example.com --verbose
+```
+
+Configuration:
+- Set `JITBIT_API_TOKEN` in `.env` file
+- Optionally set `JITBIT_BASE_URL` (defaults to https://support.4plan.de)
+
+CLI Options:
+- `file_id`: Required - Attachment FileID from Jitbit (e.g., 26355)
+- `--base-url URL`: Override base URL (default from JITBIT_BASE_URL env var)
+- `--out FILENAME`: Output filename (auto-detected from content-type if not provided)
+- `--verbose`: Enable detailed logging of requests and responses
+
+API Endpoints Tried (in order):
+1. `{base_url}/helpdesk/api/attachment?id={file_id}` (most common)
+2. `{base_url}/api/attachment?id={file_id}` (fallback)
+
+Features:
+- **Auto File Extension**: Detects .png, .jpg, .gif, .pdf based on Content-Type header
+- **Image Validation**: Optional PIL-based validation for downloaded images
+- **Error Reporting**: Clear error messages with HTTP status and response snippets
+- **Bearer Authentication**: Uses JITBIT_API_TOKEN for secure API access
+
+Example Output:
+```
+[OK] Downloaded attachment id=26355 from https://support.4plan.de/helpdesk/api/attachment?id=26355
+[OK] Content-Type: image/png
+[OK] Saved to: attachment_26355.png
+[OK] Image validated by PIL. Format=PNG
+```
+
+### scripts/test_llm_parse_errors.py
+
+Purpose:
+- Test script for debugging LLM JSON parsing errors from `process_tickets_with_llm.py`.
+- Helps isolate and fix issues when LLM responses can't be parsed as valid JSON.
+
+------------------------------------------------------------
+## Project Workflow
+
+Here's the typical workflow for processing Jitbit data:
+
+### 1. Initial Setup
+```bash
+# Clone and install dependencies
+git clone <repository-url>
+cd S4U_JitBit_Tickets
+pip3 install -r requirements.txt
+
+# Create environment file
+cp .env.example .env  # Edit with your API keys
+```
+
+### 2. Export Data from Jitbit
+```bash
+# Export tickets (interactive mode)
+python3 ticket_relevante_felder.py
+
+# Export knowledge base
+python3 kb_export_json.py --yes
+```
+
+### 3. Process with LLM (Optional)
+```bash
+# Process tickets for RAG-friendly summaries
+python3 process_tickets_with_llm.py --limit 50 --max-calls 100
+
+# Check for any parsing errors
+ls -la llm_parse_errors/
+```
+
+### 4. Generate Documents
+```bash
+# Create PDF from knowledge base
+python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o KB.pdf
+
+# Create DOCX from ticket summaries
+python3 tickets_to_pdf.py -i Ticket_Data.JSON -o Tickets.docx
+```
+
+## Output Files
+
+The repository generates several output files during processing:
+
+| File | Created By | Content |
+|------|------------|---------|
+| `JitBit_relevante_Tickets.json` | ticket_relevante_felder.py | Raw ticket data with comments and attachments |
+| `JitBit_Knowledgebase.json` | kb_export_json.py | Knowledge base articles with BBCode conversion |
+| `Ticket_Data.JSON` | process_tickets_with_llm.py | LLM-processed ticket summaries (relevant only) |
+| `not relevant.json` | process_tickets_with_llm.py | Raw tickets marked as not relevant by LLM |
+| `llm_parse_errors/*.txt` | process_tickets_with_llm.py | Debug files for LLM parsing failures |
+| `*.pdf` | kb_to_pdf.py | Formatted PDF documents |
+| `*.docx` | tickets_to_pdf.py | Formatted Word documents |
+
+## Troubleshooting
+
+### API Authentication Issues
+- Verify `JITBIT_API_TOKEN` is correct and has sufficient permissions
+- Test with `scripts/jitbit_fetch_attachment.py` using a known attachment ID
+- Check if your Jitbit instance uses `/helpdesk/api/` or `/api/` endpoints
+
+### LLM Processing Issues  
+- Check `llm_parse_errors/` directory for parsing failures
+- Verify `TOGETHER_API_KEY` is valid and has sufficient credits
+- Use `--only-ticket-id` flag to debug specific tickets
+- Reduce `--max-tokens` if hitting model limits
+
+### Memory Issues with Large Datasets
+- Install `ijson` for streaming: `pip3 install -U ijson` 
+- Avoid `--newest-first` flag for very large exports
+- Process in smaller batches using `--limit` and `--start-index`
+
+### Image/Attachment Issues
+- For protected images, ensure proper authentication (cookies or API tokens)
+- Use `--verbose` flag to debug image download failures  
+- Check Content-Type headers for non-image content
+- Verify URLs are accessible from your network
