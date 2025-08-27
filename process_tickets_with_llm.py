@@ -225,7 +225,7 @@ class TogetherClient:
 # ---------------------------
 
 SYSTEM_PROMPT = """You analyze IT support tickets. Decide if the ticket addresses a real technical problem and a concrete solution (not a simple request like password reset, user creation, or similar routine tasks).
-If relevant, produce a concise summary that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content. Use Markdown within the fields where asked.
+If relevant, produce a concise summary that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content. Also remove any company names mentioned in the ticket. Use Markdown within the fields where asked.
 
 Strictly output a single JSON object only (no code fences, no prose). Exact keys and schema:
 {

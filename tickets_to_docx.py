@@ -463,7 +463,7 @@ def build_doc_for_tickets(
 ) -> None:
     usable_w_emu, usable_h_emu = get_usable_emu(doc)
 
-    for idx, t in enumerate(tickets_subset, start=1):
+    for t in tickets_subset:
         subject = (t.get("subject") or "").strip() or "(Ohne Betreff)"
         problem = (t.get("problem") or "").rstrip()
         solution = (t.get("solution") or "").rstrip()
@@ -509,17 +509,13 @@ def build_doc_for_tickets(
         h2.style = "Heading 2"
         add_plain_text_block(doc, solution)
 
-        # Page break between tickets in this subset
-        if idx != len(tickets_subset):
-            doc.add_page_break()
-
 
 # ---- CLI ----
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a DOCX from ticket JSON (API-first image fetching).")
+    parser = argparse.ArgumentParser(description="Generate separate DOCX files per ticket (API-first image fetching).")
     parser.add_argument("--input", "-i", default="Ticket_Data.JSON", help="Path to JSON file with an array of tickets")
-    parser.add_argument("--output", "-o", default="Ticket_Data.docx", help="Output DOCX filename")
+    parser.add_argument("--output-dir", "-o", default="documents", help="Output directory for DOCX files")
     parser.add_argument("--page-size", choices=["A4", "LETTER"], default="A4", help="Page size")
     parser.add_argument("--margin", type=float, default=36.0, help="Margins in points (default ~0.5 inch)")
     parser.add_argument("--include-images", type=str2bool, default=True, help="Include images from image_urls[]")
@@ -528,7 +524,6 @@ def main():
     parser.add_argument("--verbose", type=str2bool, default=False, help="Enable verbose logging")
     parser.add_argument("--base-url", default=None, help="Base URL to resolve relative links and derive API root (overrides JITBIT_BASE_URL)")
     parser.add_argument("--token", default=None, help="Bearer token for Jitbit API (overrides JITBIT_API_TOKEN)")
-    parser.add_argument("--chunk-size", type=int, default=50, help="Max number of tickets per DOCX chunk (default 50). Use 0 or negative to disable chunking.")
     args = parser.parse_args()
 
     # Load JSON (top-level array)
@@ -557,36 +552,37 @@ def main():
 
     fetcher = JitbitFetcher(api_root=api_root, token=token, timeout=args.timeout, verbose=args.verbose)
 
-    # Determine chunks
-    chunk_size = int(args.chunk_size) if isinstance(args.chunk_size, int) else 0
-    if chunk_size <= 0 or not tickets:
-        chunks = [tickets]
-    else:
-        chunks = [tickets[i:i + chunk_size] for i in range(0, len(tickets), chunk_size)]
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    root, ext = os.path.splitext(args.output)
-    if not ext:
-        ext = ".docx"
+    # Process each ticket individually
+    for ticket in tickets:
+        ticket_id = ticket.get("ticket_id", "unknown")
+        subject = ticket.get("subject", "No Subject").strip()
+        
+        # Create a safe filename from ticket ID and subject
+        safe_subject = re.sub(r'[<>:"/\\|?*]', '_', subject)[:50]  # Truncate and sanitize
+        filename = f"ticket_{ticket_id}_{safe_subject}.docx"
+        out_file = os.path.join(args.output_dir, filename)
 
-    for ci, subset in enumerate(chunks, start=1):
-        if len(chunks) == 1:
-            out_file = args.output
-        else:
-            out_file = f"{root}_{ci:03d}{ext}"
-
+        # Create a new document for this ticket
         doc = Document()
         set_page_size_and_margins(doc, args.page_size, args.margin)
 
+        # Build document with single ticket (wrapped in list for compatibility)
         build_doc_for_tickets(
             doc=doc,
-            tickets_subset=subset,
+            tickets_subset=[ticket],
             env_base=env_base,
             fetcher=fetcher,
             include_images=args.include_images,
             add_placeholders=args.image_placeholder,
         )
+        
         doc.save(out_file)
         print(f"[OK] DOCX generated: {out_file}")
+
+    print(f"[INFO] Generated {len(tickets)} separate DOCX files in {args.output_dir}/")
 
 
 if __name__ == "__main__":
