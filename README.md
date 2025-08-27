@@ -6,8 +6,8 @@ This repository contains Python programs that work together to extract Jitbit ti
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
 - **process_tickets_with_llm.py** — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (includes original Subject in the output summaries).
 - **kb_export_json.py** — Exports Jitbit Knowledge Base articles as JSON with BBCode to Markdown conversion and attachment extraction.
-- **kb_to_pdf.py** — Renders Knowledge Base JSON to PDF format with images and formatting.
-- **tickets_to_pdf.py** — Converts ticket summaries to DOCX format.
+- **kb_to_docx.py** — Renders Knowledge Base JSON to DOCX format with images and formatting.
+- **tickets_to_docx.py** — Converts ticket summaries to DOCX format.
 
 ## Utility Scripts:
 - **scripts/jitbit_fetch_attachment.py** — Standalone utility to fetch individual Jitbit attachments via API.
@@ -576,7 +576,7 @@ Notes & troubleshooting:
 - For authenticated sites with aggressive CSRF or dynamic tokens, consider exporting a cookies.txt immediately after logging-in and re-running quickly.
 
 ------------------------------------------------------------
-## 4) Render Ticket summaries to DOCX (tickets_to_pdf.py)
+## 4) Render Ticket summaries to DOCX (tickets_to_docx.py)
 
 Purpose:
 - Convert Ticket_Data.JSON into a .docx document with one ticket per page:
@@ -590,7 +590,7 @@ Dependencies:
 
 Basic usage:
 ```
-python3 tickets_to_pdf.py -i Ticket_Data.JSON -o Ticket_Data.docx
+python3 tickets_to_docx.py -i Ticket_Data.JSON -o Ticket_Data.docx
 ```
 
 Options:
@@ -612,11 +612,11 @@ Formatting notes:
 
 Example:
 ```
-python3 tickets_to_pdf.py --input Ticket_Data.JSON --output Ticket_Data.docx --include-images true --verbose true
+python3 tickets_to_docx.py --input Ticket_Data.JSON --output Ticket_Data.docx --include-images true --verbose true
 ```
 
 ------------------------------------------------------------
-## 5) Render Jitbit Knowledgebase JSON to a single DOCX (kb_to_pdf.py)
+## 5) Render Jitbit Knowledgebase JSON to a single DOCX (kb_to_docx.py)
 
 Purpose:
 - Convert a Jitbit Knowledgebase export (JSON) into a single, nicely formatted DOCX (one article per page) with:
@@ -633,7 +633,7 @@ pip3 install -U python-docx beautifulsoup4 requests pillow python-dotenv
 
 Basic usage:
 ```
-python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o Knowledgebase.docx
+python3 kb_to_docx.py -i JitBit_Knowledgebase.json -o Knowledgebase.docx
 ```
 
 Authentication for protected images (API token):
@@ -761,7 +761,7 @@ ls -la llm_parse_errors/
 python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o KB.pdf
 
 # Create DOCX from ticket summaries
-python3 tickets_to_pdf.py -i Ticket_Data.JSON -o Tickets.docx
+python3 tickets_to_docx.py -i Ticket_Data.JSON -o Tickets.docx
 ```
 
 ## Output Files
@@ -776,7 +776,7 @@ The repository generates several output files during processing:
 | `not relevant.json` | process_tickets_with_llm.py | Raw tickets marked as not relevant by LLM |
 | `llm_parse_errors/*.txt` | process_tickets_with_llm.py | Debug files for LLM parsing failures |
 | `*.pdf` | kb_to_pdf.py | Formatted PDF documents |
-| `*.docx` | tickets_to_pdf.py | Formatted Word documents |
+| `*.docx` | tickets_to_docx.py | Formatted Word documents |
 
 ## Troubleshooting
 
