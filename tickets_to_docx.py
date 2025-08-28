@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Generate a DOCX from Ticket_Data.JSON with one page per ticket.
+Generate DOCX files from Ticket_Data.JSON with configurable tickets per file.
 
 What this script does:
 - Reads a top-level JSON array of tickets with keys:
   ticket_id, date, subject, problem, solution, image_urls
-- Renders one ticket per page into a .docx file:
+- Groups tickets into batches (default: 50 tickets per DOCX file)
+- Renders each ticket with one page per ticket in the DOCX file:
   - Subject as heading
   - "Problem" section
   - "Lösung" section
@@ -23,7 +24,14 @@ Usage:
            so we rely on JITBIT_BASE_URL to derive the API root.
 
   2) Run:
-     python tickets_to_pdf.py --input Ticket_Data.JSON --output Ticket_Data.docx --verbose true
+     # Default: 50 tickets per DOCX file
+     python tickets_to_docx.py --input Ticket_Data.JSON --verbose true
+     
+     # Custom: 25 tickets per DOCX file
+     python tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 25
+     
+     # One ticket per file (original behavior)
+     python tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 1
 """
 
 import argparse
@@ -513,9 +521,10 @@ def build_doc_for_tickets(
 # ---- CLI ----
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate separate DOCX files per ticket (API-first image fetching).")
+    parser = argparse.ArgumentParser(description="Generate DOCX files with configurable number of tickets per file (API-first image fetching).")
     parser.add_argument("--input", "-i", default="Ticket_Data.JSON", help="Path to JSON file with an array of tickets")
     parser.add_argument("--output-dir", "-o", default="documents", help="Output directory for DOCX files")
+    parser.add_argument("--tickets-per-file", "-t", type=int, default=50, help="Number of tickets to combine into one DOCX file (default: 50)")
     parser.add_argument("--page-size", choices=["A4", "LETTER"], default="A4", help="Page size")
     parser.add_argument("--margin", type=float, default=36.0, help="Margins in points (default ~0.5 inch)")
     parser.add_argument("--include-images", type=str2bool, default=True, help="Include images from image_urls[]")
@@ -555,24 +564,49 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Process each ticket individually
-    for ticket in tickets:
-        ticket_id = ticket.get("ticket_id", "unknown")
-        subject = ticket.get("subject", "No Subject").strip()
+    # Validate tickets_per_file parameter
+    if args.tickets_per_file < 1:
+        print("[ERROR] --tickets-per-file must be at least 1", file=sys.stderr)
+        sys.exit(1)
+
+    # Process tickets in batches
+    total_tickets = len(tickets)
+    if total_tickets == 0:
+        print("[INFO] No tickets found in input file.")
+        return
+
+    batch_count = 0
+    generated_files = 0
+
+    for i in range(0, total_tickets, args.tickets_per_file):
+        batch_count += 1
+        ticket_batch = tickets[i:i + args.tickets_per_file]
         
-        # Create a safe filename from ticket ID and subject
-        safe_subject = re.sub(r'[<>:"/\\|?*]', '_', subject)[:50]  # Truncate and sanitize
-        filename = f"ticket_{ticket_id}_{safe_subject}.docx"
+        # Create filename for this batch
+        start_idx = i + 1
+        end_idx = min(i + args.tickets_per_file, total_tickets)
+        
+        if args.tickets_per_file == 1:
+            # Special case: one ticket per file, use original naming pattern
+            ticket = ticket_batch[0]
+            ticket_id = ticket.get("ticket_id", "unknown")
+            subject = ticket.get("subject", "No Subject").strip()
+            safe_subject = re.sub(r'[<>:"/\\|?*]', '_', subject)[:50]
+            filename = f"ticket_{ticket_id}_{safe_subject}.docx"
+        else:
+            # Multiple tickets per file
+            filename = f"tickets_{start_idx:04d}-{end_idx:04d}_batch_{batch_count:03d}.docx"
+        
         out_file = os.path.join(args.output_dir, filename)
 
-        # Create a new document for this ticket
+        # Create a new document for this batch
         doc = Document()
         set_page_size_and_margins(doc, args.page_size, args.margin)
 
-        # Build document with single ticket (wrapped in list for compatibility)
+        # Build document with this batch of tickets
         build_doc_for_tickets(
             doc=doc,
-            tickets_subset=[ticket],
+            tickets_subset=ticket_batch,
             env_base=env_base,
             fetcher=fetcher,
             include_images=args.include_images,
@@ -580,9 +614,13 @@ def main():
         )
         
         doc.save(out_file)
-        print(f"[OK] DOCX generated: {out_file}")
+        generated_files += 1
+        print(f"[OK] DOCX generated: {out_file} (tickets {start_idx}-{end_idx}, {len(ticket_batch)} tickets)")
 
-    print(f"[INFO] Generated {len(tickets)} separate DOCX files in {args.output_dir}/")
+    if args.tickets_per_file == 1:
+        print(f"[INFO] Generated {generated_files} separate DOCX files in {args.output_dir}/")
+    else:
+        print(f"[INFO] Generated {generated_files} DOCX files containing {total_tickets} tickets ({args.tickets_per_file} tickets per file) in {args.output_dir}/")
 
 
 if __name__ == "__main__":

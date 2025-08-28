@@ -579,28 +579,45 @@ Notes & troubleshooting:
 ## 4) Render Ticket summaries to DOCX (tickets_to_docx.py)
 
 Purpose:
-- Convert Ticket_Data.JSON into a .docx document with one ticket per page:
-  - Subject as heading
-  - Meta line with Ticket-ID and date
-  - "Problem" and "Lösung" sections
-  - Optional inline images from image_urls (API-first for Jitbit-protected attachments)
+- Convert Ticket_Data.JSON into DOCX files with configurable tickets per file:
+  - Groups tickets into batches (default: 50 tickets per DOCX file)
+  - Each ticket rendered with one page per ticket:
+    - Subject as heading
+    - Meta line with Ticket-ID and date
+    - "Problem" and "Lösung" sections
+    - Optional inline images from image_urls (API-first for Jitbit-protected attachments)
 
 Dependencies:
 - Added: python-docx (already listed in requirements.txt)
 
 Basic usage:
-```
-python3 tickets_to_docx.py -i Ticket_Data.JSON -o Ticket_Data.docx
+```bash
+# Default: 50 tickets per DOCX file
+python3 tickets_to_docx.py --input Ticket_Data.JSON
+
+# Custom: 25 tickets per DOCX file
+python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 25
+
+# Original behavior: one ticket per file
+python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 1
 ```
 
 Options:
-- --page-size A4|LETTER (default A4)
-- --margin POINTS (default 36 ≈ 0.5")
-- --include-images true|false (default true)
-- --image-placeholder true|false (default true)
-- --chunk-size N (default 50; splits output into multiple files Ticket_Data_001.docx, etc.)
-- --base-url, --token override env JITBIT_BASE_URL, JITBIT_API_TOKEN
-- --verbose true|false
+- `--input PATH, -i PATH`: Path to JSON file with ticket array (default: Ticket_Data.JSON)
+- `--output-dir PATH, -o PATH`: Output directory for DOCX files (default: documents)
+- `--tickets-per-file N, -t N`: Number of tickets per DOCX file (default: 50)
+- `--page-size {A4,LETTER}`: Page size (default: A4)
+- `--margin POINTS`: Margins in points (default: 36 ≈ 0.5")
+- `--include-images true|false`: Include images from image_urls[] (default: true)
+- `--image-placeholder true|false`: Insert placeholder when image fails (default: true)
+- `--timeout SECONDS`: HTTP timeout for image downloads (default: 15.0)
+- `--base-url URL`: Override JITBIT_BASE_URL from environment
+- `--token TOKEN`: Override JITBIT_API_TOKEN from environment
+- `--verbose true|false`: Enable detailed logging
+
+File naming:
+- **Multiple tickets per file**: `tickets_0001-0050_batch_001.docx`, `tickets_0051-0100_batch_002.docx`, etc.
+- **Single ticket per file** (--tickets-per-file 1): `ticket_{id}_{safe_subject}.docx`
 
 Authentication for protected images:
 - Set JITBIT_API_TOKEN in .env and JITBIT_BASE_URL to your instance base (e.g., https://support.example.com/helpdesk).
@@ -610,9 +627,24 @@ Formatting notes:
 - Supports simple inline bold using **bold** or <b>bold</b> in Problem/Solution text.
 - Simple lists are supported when lines start with -, *, • or 1., 2).
 
-Example:
-```
-python3 tickets_to_docx.py --input Ticket_Data.JSON --output Ticket_Data.docx --include-images true --verbose true
+Examples:
+```bash
+# Process with default settings (50 tickets per file)
+python3 tickets_to_docx.py --input Ticket_Data.JSON --verbose true
+
+# Create smaller files with 10 tickets each
+python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 10 --output-dir output/
+
+# Maintain original behavior (one file per ticket)
+python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 1
+
+# Custom output directory with authentication
+python3 tickets_to_docx.py \
+  --input Ticket_Data.JSON \
+  --output-dir documents/tickets/ \
+  --tickets-per-file 25 \
+  --include-images true \
+  --verbose true
 ```
 
 ------------------------------------------------------------
