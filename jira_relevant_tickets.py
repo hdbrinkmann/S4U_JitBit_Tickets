@@ -9,7 +9,7 @@ import html
 import argparse
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # ------------------------------
 # 1️⃣  Konfiguration
@@ -52,6 +52,66 @@ SESSION.mount("http://", HTTPAdapter(max_retries=retries))
 # Default timeout: (connect, read) in seconds
 TIMEOUT = (10, 30)
 
+# Progress logging toggle
+PROGRESS = False
+DETAILED_LOG = False
+
+def log_progress(msg: str):
+    try:
+        if PROGRESS:
+            print(str(msg), flush=True)
+    except Exception:
+        # avoid progress printing breaking execution
+        pass
+
+# Minimal heartbeat printing every HEARTBEAT_INTERVAL seconds, even without --progress
+HEARTBEAT_INTERVAL = 10
+_heartbeat_start_ts = 0.0
+_heartbeat_last_ts = 0.0
+
+def reset_heartbeat():
+    global _heartbeat_start_ts, _heartbeat_last_ts
+    _heartbeat_start_ts = time.time()
+    _heartbeat_last_ts = 0.0
+
+def heartbeat(label: str, current: int = None, total: int = None):
+    # Print a minimal heartbeat every HEARTBEAT_INTERVAL seconds if --progress is not enabled.
+    global _heartbeat_last_ts, _heartbeat_start_ts
+    if PROGRESS:
+        return
+    now = time.time()
+    if _heartbeat_start_ts == 0.0:
+        _heartbeat_start_ts = now
+    if (_heartbeat_last_ts == 0.0) or (now - _heartbeat_last_ts >= HEARTBEAT_INTERVAL):
+        elapsed = int(now - _heartbeat_start_ts)
+        rate = None
+        if current is not None and elapsed > 0:
+            try:
+                rate = current / elapsed
+            except Exception:
+                rate = None
+        eta = None
+        if rate and total:
+            remaining = max(0, total - current)
+            try:
+                eta = int(remaining / rate) if rate > 0 else None
+            except Exception:
+                eta = None
+        msg = f"[heartbeat {label}] elapsed={elapsed}s"
+        if current is not None:
+            msg += f" progress={current}"
+            if total is not None:
+                msg += f"/≈{total}"
+        if rate is not None:
+            msg += f" rate={rate:.1f}/s"
+        if eta is not None:
+            msg += f" ETA≈{eta}s"
+        try:
+            print(msg, flush=True)
+        except Exception:
+            pass
+        _heartbeat_last_ts = now
+
 # ------------------------------
 # Filter helpers (resolved-only, resolved-after)
 # ------------------------------
@@ -63,9 +123,9 @@ def parse_resolved_after_arg(s: str) -> str:
         return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return s
-    raise ValueError("resolved-after must be YYYYMMDD or YYYY-MM-DD")
+    raise ValueError("Date must be YYYYMMDD or YYYY-MM-DD")
 
-def build_filtered_jql(base_jql: str, resolved_only: bool, resolved_after: str) -> str:
+def build_filtered_jql(base_jql: str, resolved_only: bool, resolved_after: str, resolved_before: str) -> str:
     jql = base_jql or ""
     lower = jql.lower()
     order_by = ""
@@ -81,6 +141,9 @@ def build_filtered_jql(base_jql: str, resolved_only: bool, resolved_after: str) 
     if resolved_after:
         date_str = parse_resolved_after_arg(resolved_after)
         clauses.append(f'resolutiondate >= "{date_str}"')
+    if resolved_before:
+        date_str_b = parse_resolved_after_arg(resolved_before)
+        clauses.append(f'resolutiondate <= "{date_str_b} 23:59"')
     filtered = " AND ".join(clauses) if clauses else ""
     return (filtered + " " + order_by).strip()
 
@@ -94,14 +157,19 @@ def iso_to_datetime(s: str):
     except Exception:
         return None
 
-def meets_resolved_filters(details: dict, resolved_only: bool, resolved_after: str) -> bool:
+def meets_resolved_filters(details: dict, resolved_only: bool, resolved_after: str, resolved_before: str) -> bool:
     if resolved_only and not details.get("resolved"):
         return False
+    rdt = iso_to_datetime(details.get("resolved") or "")
     if resolved_after:
         cutoff = parse_resolved_after_arg(resolved_after)
         cutoff_dt = datetime.fromisoformat(cutoff + "T00:00:00+00:00")
-        rdt = iso_to_datetime(details.get("resolved") or "")
         if not rdt or rdt < cutoff_dt:
+            return False
+    if resolved_before:
+        cutoff_b = parse_resolved_after_arg(resolved_before)
+        end_excl = datetime.fromisoformat(cutoff_b + "T00:00:00+00:00") + timedelta(days=1)
+        if not rdt or rdt >= end_excl:
             return False
     return True
 
@@ -212,6 +280,8 @@ def get_issue_details(key: str):
             })
 
         start_at += len(values)
+        if DETAILED_LOG:
+            log_progress(f"[comments] {key}: fetched {start_at}/{total}")
         if start_at >= total or not values:
             break
 
@@ -239,38 +309,85 @@ def get_issue_details(key: str):
 # ------------------------------
 # 3️⃣  Alle Issues holen (wie oben)
 # ------------------------------
-def get_first_issues(jql: str = "order by created ASC", limit: int = 5):
+def get_first_issues(jql: str = "order by created ASC", limit: int = None):
     """
-    Fetch only the first 'limit' issues that match the given JQL.
-    Avoids long-running pagination and uses a request timeout.
+    Fetch issues that match the given JQL.
+    - If 'limit' is provided, fetch up to that many issues (with pagination if needed).
+    - If 'limit' is None, fetch ALL matching issues (full pagination).
     """
-    params = {
-        "jql": jql,
-        "startAt": 0,
-        "maxResults": limit,
-        "fields": "summary,status,assignee,description,attachment,resolution,resolutiondate"
-    }
-    print(f"Requesting first {limit} issues with JQL: {jql}")
-    resp = SESSION.get(
-        f"{JIRA_BASE_URL}/rest/api/3/search",
-        params=params,
-        timeout=TIMEOUT
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("issues", [])
+    issues = []
+    start_at = 0
+    page_size = 100
+    printed = False
+
+    reset_heartbeat()
+
+    while True:
+        if limit is not None:
+            remaining = max(0, limit - len(issues))
+            if remaining == 0:
+                break
+            batch_size = min(page_size, remaining)
+            if not printed:
+                print(f"Requesting up to {limit} issues with JQL: {jql}")
+                printed = True
+        else:
+            batch_size = page_size
+            if not printed:
+                print(f"Requesting ALL issues with JQL: {jql}")
+                printed = True
+
+        params = {
+            "jql": jql,
+            "startAt": start_at,
+            "maxResults": batch_size,
+            "fields": "summary,status,assignee,description,attachment,resolution,resolutiondate"
+        }
+        resp = SESSION.get(
+            f"{JIRA_BASE_URL}/rest/api/3/search",
+            params=params,
+            timeout=TIMEOUT
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+        batch = data.get("issues") or []
+        total = data.get("total", 0)
+
+        prev_start = start_at
+
+        issues.extend(batch)
+        start_at += len(batch)
+
+        log_progress(f"[search] startAt={prev_start} fetched={len(batch)} total≈{total} accumulated={len(issues)}")
+        heartbeat("search", len(issues), total)
+
+        if len(batch) == 0 or start_at >= total:
+            break
+
+    return issues
 
 # Utility: export Jira issues to the same JSON schema as Jitbit exporter
-def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_criteria=None, resolved_only=False, resolved_after=None):
+def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_criteria=None, resolved_only=False, resolved_after=None, resolved_before=None, append=False):
     start_time = time.time()
+    reset_heartbeat()
     tickets = []
     total_comments = 0
     total_ticket_attachments = 0
     total_comment_attachments = 0
+    n = len(issue_keys)
 
-    for key in issue_keys:
+    for idx, key in enumerate(issue_keys, 1):
+        if idx == 1 or idx % 10 == 0 or idx == n:
+            elapsed = time.time() - start_time
+            rate = idx / elapsed if elapsed > 0 else 0.0
+            eta = int((n - idx) / rate) if rate > 0 else -1
+            if DETAILED_LOG:
+                log_progress(f"[{idx}/{n}] Fetching {key} | {rate:.1f} issues/s | ETA {eta if eta>=0 else '?'}s")
+            else:
+                log_progress(f"[{idx}/{n}] {rate:.1f} issues/s | ETA {eta if eta>=0 else '?'}s")
+        heartbeat("issues", idx, n)
         d = get_issue_details(key)
-        if not meets_resolved_filters(d, resolved_only, resolved_after):
+        if not meets_resolved_filters(d, resolved_only, resolved_after, resolved_before):
             continue
 
         # Map attachments
@@ -335,8 +452,56 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
         "tickets": tickets
     }
 
+    to_write = export_data
+    if append and os.path.exists(out_path):
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = None
+
+        if isinstance(existing, dict) and isinstance(existing.get("tickets"), list):
+            existing_ids = set(str((t or {}).get("ticket_id")) for t in (existing.get("tickets") or []) if isinstance(t, dict))
+            new_unique = [t for t in tickets if str((t or {}).get("ticket_id")) not in existing_ids]
+
+            # Recompute metrics for new_unique to avoid counting duplicates
+            new_comments = sum(len(t.get("kommentare") or []) for t in new_unique)
+            new_ticket_atts = sum(len(t.get("Attachments") or []) for t in new_unique)
+            new_comment_atts = 0
+
+            existing["tickets"].extend(new_unique)
+            ex_info = existing.get("export_info") or {}
+            ex_info["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            ex_info["total_closed_tickets"] = len(existing["tickets"])
+            ex_info["total_comments"] = (ex_info.get("total_comments") or 0) + new_comments
+            ex_info["total_ticket_attachments"] = (ex_info.get("total_ticket_attachments") or 0) + new_ticket_atts
+            ex_info["total_comment_attachments"] = (ex_info.get("total_comment_attachments") or 0) + new_comment_atts
+            ex_info["export_duration_seconds"] = (ex_info.get("export_duration_seconds") or 0) + (time.time() - start_time)
+            fc_existing = ex_info.get("filter_criteria") or ""
+            ex_info["filter_criteria"] = (fc_existing + " | " if fc_existing else "") + (filter_criteria or "")
+            ex_info["api_base_url"] = JIRA_BASE_URL
+            existing["export_info"] = ex_info
+            to_write = existing
+
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(to_write, f, ensure_ascii=False, indent=2)
+
+            print(f"[OK] Appended {len(new_unique)} new tickets (deduped) to {out_path} (total now {len(existing['tickets'])})")
+            print(f"[OK] New comments added: {new_comments}, ticket attachments added: {new_ticket_atts}")
+            return
+        elif isinstance(existing, list):
+            # Existing file is a raw array of tickets
+            existing_ids = set(str((t or {}).get("ticket_id")) for t in existing if isinstance(t, dict))
+            new_unique = [t for t in tickets if str((t or {}).get("ticket_id")) not in existing_ids]
+            combined = existing + new_unique
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(combined, f, ensure_ascii=False, indent=2)
+            print(f"[OK] Appended {len(new_unique)} tickets to existing array file {out_path} (total now {len(combined)})")
+            return
+        # Fallback to overwrite if existing format is unexpected
+
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(export_data, f, ensure_ascii=False, indent=2)
+        json.dump(to_write, f, ensure_ascii=False, indent=2)
 
     print(f"[OK] Exported {len(tickets)} tickets to {out_path}")
     print(f"[OK] Total comments: {total_comments}, ticket attachments: {total_ticket_attachments}, comment attachments: {total_comment_attachments}")
@@ -349,11 +514,18 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(description="Fetch Jira issues or a specific issue with details")
         parser.add_argument("--issue", "-i", help="Issue key, e.g., SUP-41210")
         parser.add_argument("--jql", default="project=SUP order by created ASC", help="JQL for listing issues")
-        parser.add_argument("--limit", type=int, default=5, help="Max results for JQL search")
+        parser.add_argument("--limit", type=int, default=None, help="Max results for JQL search (omit to fetch ALL that match)")
         parser.add_argument("--resolved-only", action="store_true", help="Only include issues with statusCategory=Done")
         parser.add_argument("--resolved-after", type=str, help="Only include issues resolved on/after this date (YYYYMMDD or YYYY-MM-DD)")
+        parser.add_argument("--resolved-before", type=str, help="Only include issues resolved on/before this date (YYYYMMDD or YYYY-MM-DD)")
         parser.add_argument("--export", "-o", help="Write JSON to this file using Jitbit-like schema (e.g., JIRA_relevante_Tickets.json)")
+        parser.add_argument("--append", action="store_true", help="Append to existing export file and de-duplicate by ticket_id")
+        parser.add_argument("--progress", action="store_true", help="Print progress while fetching")
+        parser.add_argument("--detailed-log", action="store_true", help="Show detailed per-ticket output; otherwise with --progress only progress is shown")
         args = parser.parse_args()
+
+        PROGRESS = bool(args.progress)
+        DETAILED_LOG = bool(args.detailed_log)
 
         if args.issue:
             key = args.issue.strip()
@@ -363,7 +535,9 @@ if __name__ == "__main__":
                     fc += " AND statusCategory=Done"
                 if args.resolved_after:
                     fc += f' AND resolutiondate >= "{parse_resolved_after_arg(args.resolved_after)}"'
-                export_jira_json([key], args.export, filter_criteria=fc, resolved_only=args.resolved_only, resolved_after=args.resolved_after)
+                if args.resolved_before:
+                    fc += f' AND resolutiondate <= "{parse_resolved_after_arg(args.resolved_before)} 23:59"'
+                export_jira_json([key], args.export, filter_criteria=fc, resolved_only=args.resolved_only, resolved_after=args.resolved_after, resolved_before=args.resolved_before, append=args.append)
             else:
                 details = get_issue_details(key)
                 print(f"1. {key}: {details['summary']} | Status: {details['status']} | Bearbeiter: {details['assignee']}")
@@ -378,29 +552,48 @@ if __name__ == "__main__":
                 # Support comments
                 print(f"   Support comments: {len(details.get('support_comments') or [])}")
         else:
-            built_jql = build_filtered_jql(args.jql, args.resolved_only, args.resolved_after)
+            # Require at least one of --limit or --resolved-after to be defined to avoid unbounded fetches
+            if args.limit is None and not args.resolved_after:
+                parser.error("Either --limit or --resolved-after must be provided. Aborting without starting the process.")
+
+            # Validate date range if both bounds are provided
+            if args.resolved_after and args.resolved_before:
+                if parse_resolved_after_arg(args.resolved_after) > parse_resolved_after_arg(args.resolved_before):
+                    parser.error("--resolved-after date must be on or before --resolved-before date.")
+
+            built_jql = build_filtered_jql(args.jql, args.resolved_only, args.resolved_after, args.resolved_before)
             issues = get_first_issues(jql=built_jql, limit=args.limit)
             keys = [it.get("key") for it in issues if it and it.get("key")]
             if args.export:
                 out = args.export or "JIRA_relevante_Tickets.json"
-                fc = f"JQL: {built_jql} LIMIT {args.limit}"
-                export_jira_json(keys, out_path=out, filter_criteria=fc, resolved_only=args.resolved_only, resolved_after=args.resolved_after)
+                limit_info = f"LIMIT {args.limit}" if args.limit is not None else "ALL"
+                fc = f"JQL: {built_jql} {limit_info}"
+                export_jira_json(keys, out_path=out, filter_criteria=fc, resolved_only=args.resolved_only, resolved_after=args.resolved_after, resolved_before=args.resolved_before, append=args.append)
             else:
                 print(f"Gefundene Tickets: {len(issues)}")
+                n = len(issues)
+                reset_heartbeat()
                 for i, issue in enumerate(issues, start=1):
+                    if i == 1 or i % 10 == 0 or i == n:
+                        if DETAILED_LOG:
+                            log_progress(f"[{i}/{n}] Fetching details for {issue.get('key')}")
+                        else:
+                            log_progress(f"[{i}/{n}] Processing...")
+                    heartbeat("details", i, n)
                     key = issue.get('key')
                     details = get_issue_details(key)
-                    print(f"{i}. {key}: {details['summary']} | Status: {details['status']} | Bearbeiter: {details['assignee']}")
-                    # Problem/Description preview
-                    problem_preview = (details.get('problem') or '').replace('\n', ' ')[:200]
-                    tail = '...' if len((details.get('problem') or '')) > 200 else ''
-                    print(f"   Problem: {problem_preview}{tail}")
-                    # Resolution info
-                    print(f"   Resolution: {details.get('resolution') or '-'} | Resolved at: {details.get('resolved') or '-'}")
-                    # Attachments
-                    print(f"   Attachments: {len(details.get('attachments') or [])}")
-                    # Support comments
-                    print(f"   Support comments: {len(details.get('support_comments') or [])}")
+                    if DETAILED_LOG or not PROGRESS:
+                        print(f"{i}. {key}: {details['summary']} | Status: {details['status']} | Bearbeiter: {details['assignee']}")
+                        # Problem/Description preview
+                        problem_preview = (details.get('problem') or '').replace('\n', ' ')[:200]
+                        tail = '...' if len((details.get('problem') or '')) > 200 else ''
+                        print(f"   Problem: {problem_preview}{tail}")
+                        # Resolution info
+                        print(f"   Resolution: {details.get('resolution') or '-'} | Resolved at: {details.get('resolved') or '-'}")
+                        # Attachments
+                        print(f"   Attachments: {len(details.get('attachments') or [])}")
+                        # Support comments
+                        print(f"   Support comments: {len(details.get('support_comments') or [])}")
     except requests.exceptions.Timeout:
         print("Zeitüberschreitung bei der Anfrage. Bitte Netzwerk/Jira-Verfügbarkeit prüfen.")
     except requests.exceptions.HTTPError as e:

@@ -4,7 +4,7 @@ This repository contains Python programs that work together to extract Jitbit ti
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
-- **jira_relevant_tickets.py** — Exports resolved Jira issues in the same JSON schema as the Jitbit exporter, including problem, support comments (non-customer), resolution date, and attachments, with filters for resolved-only and resolved-after date.
+- **jira_relevant_tickets.py** — Exports resolved Jira issues in the same JSON schema as the Jitbit exporter, including problem, support comments (non-customer), resolution date, and attachments, with filters for resolved-only and resolved-after date, plus optional progress output (`--progress`, `--detailed-log`) and a minimal heartbeat every ~10s even without `--progress`.
 - **process_tickets_with_llm.py** — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (includes original Subject in the output summaries).
 - **kb_export_json.py** — Exports Jitbit Knowledge Base articles as JSON with BBCode to Markdown conversion and attachment extraction.
 - **kb_to_docx.py** — Renders Knowledge Base JSON to DOCX format with images and formatting.
@@ -273,6 +273,9 @@ Configuration:
 Filters:
 - `--resolved-only` restricts to issues in status category Done.
 - `--resolved-after YYYYMMDD` (or `YYYY-MM-DD`) includes only issues resolved on/after the given date (compares `resolutiondate`).
+- `--resolved-before YYYYMMDD` (or `YYYY-MM-DD`) includes only issues resolved on/before the given date (inclusive). Combine with --resolved-after for a bounded date range.
+
+Important: Either `--limit` or `--resolved-after` must be provided; otherwise the script exits without starting to avoid unbounded exports. Omitting `--limit` fetches ALL matching issues (use with `--resolved-after`). The --resolved-before flag is optional and does not replace this requirement.
 
 Basic usage:
 ```bash
@@ -289,15 +292,42 @@ python3 jira_relevant_tickets.py \
   --resolved-only \
   --resolved-after 20250331 \
   --export JIRA_relevante_Tickets.json
+
+# Date range (inclusive) and append to an existing file (de-duplicated)
+python3 jira_relevant_tickets.py \
+  --jql "project=SUP order by resolutiondate DESC" \
+  --resolved-after 2025-01-01 \
+  --resolved-before 2025-03-31 \
+  --append \
+  --export JIRA_relevante_Tickets.json
+```
+
+Progress and logging examples:
+```bash
+# Progress only (compact): shows search pagination and [idx/total] with rate/ETA
+python3 jira_relevant_tickets.py \
+  --jql "project=SUP order by resolutiondate DESC" \
+  --resolved-only --resolved-after 2025-07-31 \
+  --progress
+
+# Progress + detailed logs (includes issue keys and per-ticket prints; enables comment pagination logs)
+python3 jira_relevant_tickets.py \
+  --jql "project=SUP order by resolutiondate DESC" \
+  --resolved-only --resolved-after 2025-07-31 \
+  --progress --detailed-log
 ```
 
 CLI Options:
 - `--issue KEY` — Specific issue key (e.g., SUP-41210)
 - `--jql "..."` — JQL for listing (ORDER BY preserved)
-- `--limit N` — Max results to fetch from search
+- `--limit N` — Max results to fetch from search. If omitted, ALL matching issues are fetched (with pagination). Note: Either `--limit` or `--resolved-after` is required.
 - `--export PATH` — Write JSON using Jitbit-like schema (default example: JIRA_relevante_Tickets.json)
 - `--resolved-only` — Only include issues in Done status category
 - `--resolved-after YYYYMMDD|YYYY-MM-DD` — Only include issues resolved on/after the date
+- `--resolved-before YYYYMMDD|YYYY-MM-DD` — Only include issues resolved on/before the date (inclusive)
+- `--append` — Append to existing export file, de-duplicate by ticket_id; updates export_info counters
+- `--progress` — Print progress (search pagination and periodic `[idx/total]` lines with rate/ETA). Suppresses the default heartbeat lines.
+- `--detailed-log` — With `--progress`, include issue keys and per-ticket details; enables comment pagination progress lines.
 
 Output structure (JIRA_relevante_Tickets.json):
 - Mirrors the Jitbit exporter:
@@ -342,6 +372,9 @@ Notes:
 - Support comments exclude end customers (filters `author.accountType == "customer"`).
 - Jira attachments are issue-level; comment-level Attachments arrays are intentionally empty.
 - The exporter applies filters both in the search JQL and post-fetch (safety check on `resolutiondate`).
+- Progress behavior:
+  - Without `--progress`: a minimal heartbeat prints about every 10 seconds during long operations (search pagination, per-issue processing, listing) showing elapsed time, approximate progress, rate, and ETA.
+  - With `--progress`: explicit progress lines are printed and the heartbeat is suppressed to avoid duplicate output; add `--detailed-log` to include issue keys and per-ticket details.
 
 ------------------------------------------------------------
 ## 2) Analyze tickets with LLM (process_tickets_with_llm.py)
