@@ -3,7 +3,7 @@
 """
 process_tickets_with_llm.py
 
-Standalone script to process exported Jitbit tickets with Together.ai, classify relevance,
+Standalone script to process exported Jitbit tickets with an OpenAI-compatible provider (e.g., Scaleway), classify relevance,
 and produce two outputs:
 - Ticket_Data.JSON: JSON array of relevant ticket summaries (LLM-normalized; includes original Subject)
 - not relevant.json: raw ticket objects for tickets classified as "not relevant"
@@ -30,15 +30,15 @@ Input is expected to be the output from ticket_relevante_felder.py:
 }
 
 Environment:
-- .env must include:
-  - TOGETHER_API_KEY=<key> (required)
-  - LLM_MODEL=<Together model id> (preferred, e.g., openai/gpt-oss-120b)
-  - Optional fallback: TOGETHER_MODEL=<model id>
+- .env must include for Scaleway:
+  - SCW_API_KEY or SCW_SECRET_KEY=<key> (required)
+  - Optional: SCW_OPENAI_BASE_URL=<base url> (defaults to https://api.scaleway.com/ai/v1beta1)
+  - LLM_MODEL=<Scaleway model id> (preferred), optional fallback: SCW_MODEL=<model id>
 
 Usage:
-  python process_tickets_with_llm.py \
+  python3 process_tickets_with_llm.py \
     --input JitBit_relevante_Tickets.json \
-    --output Ticket_Data.JSON \
+    --output Ticket_Data_TEST.JSON \
     --not-relevant-out "not relevant.json" \
     --limit 50 \
     --max-calls 200 \
@@ -107,14 +107,13 @@ def load_env() -> None:
 
 
 # ---------------------------
-# Together.ai LLM client
+# OpenAI-compatible LLM client (Scaleway-ready)
 # ---------------------------
 
-class TogetherClient:
-    API_URL = "https://api.together.xyz/v1/chat/completions"
-
+class OpenAICompatibleClient:
     def __init__(
         self,
+        api_url: str,
         api_key: str,
         model: str,
         max_tokens: int = 3000,
@@ -123,7 +122,9 @@ class TogetherClient:
         max_retries: int = 5,
         backoff_base: float = 1.0,
         backoff_cap: float = 32.0,
+        project_id: Optional[str] = None,
     ) -> None:
+        self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.max_tokens = max_tokens
@@ -132,17 +133,29 @@ class TogetherClient:
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.backoff_cap = backoff_cap
+        self.effective_endpoint: Optional[str] = None
+        self.project_id = project_id
 
     def chat(self, system_prompt: str, user_prompt: str) -> str:
         """
-        Call Together.ai chat completions with retry on 429/5xx.
+        Call OpenAI-compatible chat completions (e.g., Scaleway) with retry on 429/5xx.
         Returns response text (assistant content).
         Raises on persistent failures.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
+            "X-Auth-Token": self.api_key,
             "Content-Type": "application/json",
         }
+        if getattr(self, "project_id", None):
+            headers["X-Project-Id"] = self.project_id  # Scaleway often requires the Project ID
+        # Optionally include Organization header if available
+        try:
+            org_id = os.environ.get("SCW_ORGANIZATION_ID") or os.environ.get("SCW_DEFAULT_ORGANIZATION_ID")
+            if org_id:
+                headers["X-Organization-Id"] = org_id
+        except Exception:
+            pass
         payload = {
             "model": self.model,
             "messages": [
@@ -155,11 +168,12 @@ class TogetherClient:
         }
 
         attempt = 0
+        endpoint = self._final_endpoint()
         while True:
             attempt += 1
             try:
                 resp = requests.post(
-                    self.API_URL,
+                    endpoint,
                     headers=headers,
                     data=json.dumps(payload),
                     timeout=self.request_timeout,
@@ -176,10 +190,10 @@ class TogetherClient:
                 try:
                     data = resp.json()
                 except Exception:
-                    raise RuntimeError("Invalid JSON response from Together.ai")
+                    raise RuntimeError("Invalid JSON response from LLM provider")
                 content = self._extract_content(data)
                 if content is None:
-                    raise RuntimeError("Together.ai response missing content")
+                    raise RuntimeError("LLM response missing content")
                 return content
 
             # Retry on 429/5xx
@@ -197,7 +211,7 @@ class TogetherClient:
                 raise RuntimeError(f"HTTP {resp.status_code} after {self.max_retries} retries: {resp.text[:500]}")
 
             # Other non-retryable errors:
-            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:1000]}")
+            raise RuntimeError(f"HTTP {resp.status_code} at {endpoint}: {resp.text[:1000]}")
 
     def _compute_backoff(self, attempt: int) -> float:
         base = min(self.backoff_cap, self.backoff_base * (2 ** (attempt - 1)))
@@ -219,6 +233,83 @@ class TogetherClient:
             return content
         except Exception:
             return None
+
+    def _final_endpoint(self) -> str:
+        """
+        Resolve a single chat completions endpoint from api_url, without trying variants.
+        - If api_url already ends with /chat/completions, use as-is.
+        - Otherwise append /chat/completions.
+        - Strips any accidental markup like angle brackets or trailing parentheses.
+        """
+        raw = (self.api_url or "").strip()
+        m = re.search(r"https?://[^\s<>\")']+", raw)
+        base = m.group(0) if m else raw
+        base = base.strip().strip("<>()").rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        return f"{base}/chat/completions"
+
+    def _candidate_endpoints(self) -> List[str]:
+        """
+        Build a list of possible OpenAI-compatible chat completions endpoints from api_url.
+        - Extracts the first URL if api_url contains markup.
+        - If api_url already looks like a full chat endpoint, return it only.
+        - Otherwise, generate common variants used by providers:
+          * <base>/v1/chat/completions
+          * <base>/chat/completions
+          * <base>/openai/v1/chat/completions
+          * <base>/providers/openai/chat/completions
+        """
+        raw = (self.api_url or "").strip()
+        m = re.search(r"https?://[^\s<>\")']+", raw)
+        base = m.group(0) if m else raw
+        # Sanitize any leftover markup or trailing punctuation from env/CLI
+        base = base.strip().strip("<>()").rstrip("/")
+        if ")" in base:
+            base = base.split(")")[0].rstrip("/")
+
+        # Build candidates preferring region-scoped endpoints first (Scaleway)
+        lower = base.lower()
+        base_root = base
+        if "/chat/completions" in lower:
+            base_root = base[: lower.rfind("/chat/completions")].rstrip("/")
+
+        candidates: List[str] = []
+
+        # Region-scoped endpoints (if Scaleway-style base)
+        try:
+            scw_region = (os.environ.get("SCW_REGION") or "").strip().lower()
+        except Exception:
+            scw_region = ""
+        region_list = [scw_region] if scw_region else ["fr-par", "nl-ams", "pl-waw"]
+        if "scaleway.com" in lower or "/ai/" in lower:
+            for r in region_list:
+                # Primary Scaleway AI Inference endpoint
+                candidates.append(f"{base_root}/regions/{r}/chat/completions")
+                # Fallback: OpenAI provider-compatible proxy if enabled on account
+                candidates.append(f"{base_root}/regions/{r}/providers/openai/chat/completions")
+
+        # Generic OpenAI-compatible paths
+        candidates.extend([
+            f"{base_root}/openai/v1/chat/completions",
+            f"{base_root}/v1/chat/completions",
+            f"{base_root}/providers/openai/chat/completions",
+            f"{base_root}/chat/completions",
+        ])
+
+        # If original base already looked like a full endpoint, keep it as a last resort
+        if lower.endswith("/chat/completions") or lower.endswith("/v1/chat/completions") or lower.endswith("/openai/v1/chat/completions") or lower.endswith("/providers/openai/chat/completions"):
+            candidates.append(base)
+
+        # De-duplicate while preserving order
+        seen = set()
+        uniq: List[str] = []
+        for c in candidates:
+            c_norm = c.strip().rstrip("/")
+            if c_norm not in seen:
+                seen.add(c_norm)
+                uniq.append(c_norm)
+        return uniq
 
 
 # ---------------------------
@@ -952,6 +1043,8 @@ def process_tickets(
     not_relevant_path: Path,
     model: str,
     api_key: str,
+    api_url: str,
+    project_id: Optional[str],
     limit_relevant: Optional[int],
     max_calls: Optional[int],
     max_tokens: int,
@@ -1005,11 +1098,13 @@ def process_tickets(
             except Exception as e:
                 print(f"[warn] Could not read existing {not_relevant_path.name}: {e}. Overwriting.")
 
-    client = TogetherClient(
+    client = OpenAICompatibleClient(
+        api_url=api_url,
         api_key=api_key,
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
+        project_id=project_id,
     )
 
     total_calls = 0
@@ -1018,6 +1113,7 @@ def process_tickets(
 
     print(f"Input: {input_path} ({input_mode_desc})")
     print(f"Model: {model}")
+    print(f"Endpoint: {api_url}")
     print(f"Max tokens: {max_tokens}, Temperature: {temperature}")
     print(f"Limit (relevant only): {limit_relevant if limit_relevant is not None else 'none'}")
     print(f"Max calls: {max_calls if max_calls is not None else 'none'}")
@@ -1089,39 +1185,56 @@ def process_tickets(
 # ---------------------------
 
 def resolve_model_from_env() -> str:
-    # Priority: LLM_MODEL -> TOGETHER_MODEL -> default
-    model = os.environ.get("LLM_MODEL") or os.environ.get("TOGETHER_MODEL")
+    # Priority: LLM_MODEL -> SCW_MODEL -> TOGETHER_MODEL -> default
+    model = os.environ.get("LLM_MODEL") or os.environ.get("SCW_MODEL") or os.environ.get("TOGETHER_MODEL")
     if not model:
         model = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+    # Normalize provider-prefixed ids like "openai/gpt-oss-120b" -> "gpt-oss-120b"
+    if isinstance(model, str) and "/" in model:
+        parts = model.split("/")
+        if parts[-1]:
+            model = parts[-1]
     return model
 
 
 def main() -> None:
     load_env()
-    api_key = os.environ.get("TOGETHER_API_KEY", "").strip()
+    api_key = (os.environ.get("SCW_API_KEY") or os.environ.get("SCW_SECRET_KEY") or "").strip()
     if not api_key:
-        print("❌ TOGETHER_API_KEY not set in environment or .env")
+        print("❌ Scaleway API key not set (SCW_API_KEY or SCW_SECRET_KEY missing in environment or .env)")
         sys.exit(1)
+
+    api_url = os.environ.get("SCW_OPENAI_BASE_URL", "https://api.scaleway.ai/v1/chat/completions")
+    project_id = os.environ.get("SCW_PROJECT_ID") or os.environ.get("SCW_DEFAULT_PROJECT_ID")
 
     model = resolve_model_from_env()
 
-    parser = argparse.ArgumentParser(description="Process Jitbit tickets with Together.ai and classify relevance.")
+    parser = argparse.ArgumentParser(description="Process Jitbit tickets with an OpenAI-compatible provider (Scaleway) and classify relevance.")
     parser.add_argument("--input", default="JitBit_relevante_Tickets.json", help="Path to input JSON (export from Jitbit).")
     parser.add_argument("--output", default="Ticket_Data.JSON", help="Path to aggregated relevant summaries (JSON array).")
     parser.add_argument("--not-relevant-out", default="not relevant.json", help="Path for raw 'not relevant' tickets JSON.")
     parser.add_argument("--limit", type=int, default=None, help="Number of relevant tickets to collect (counts relevant only).")
     parser.add_argument("--max-calls", type=int, default=None, help="Safety cap on total LLM calls.")
-    parser.add_argument("--max-tokens", type=int, default=5000, help="max_tokens for Together.ai.")
-    parser.add_argument("--temperature", type=float, default=0.0, help="temperature for Together.ai.")
+    parser.add_argument("--max-tokens", type=int, default=5000, help="max_tokens for the LLM.")
+    parser.add_argument("--temperature", type=float, default=0.0, help="temperature for the LLM.")
     parser.add_argument("--start-index", type=int, default=0, help="Start processing from this ticket index.")
     parser.add_argument("--append", action="store_true", help="Append to existing output files if present.")
     parser.add_argument("--only-ticket-id", type=int, default=None, help="Process only the ticket with this ID.")
+    parser.add_argument("--api-url", default=None, help="OpenAI-compatible base URL or full /chat/completions endpoint.")
     parser.add_argument(
         "--newest-first",
         action="store_true",
         help="Process tickets in descending ticket_id order (loads the entire input into memory)."
     )
     args = parser.parse_args()
+
+    # Resolve API base/endpoint from CLI or env fallbacks (prefer CLI)
+    api_url = (getattr(args, "api_url", None)
+               or os.environ.get("SCW_OPENAI_BASE_URL")
+               or os.environ.get("OPENAI_BASE_URL")
+               or os.environ.get("OPENAI_API_BASE")
+               or api_url)
+    project_id = project_id  # keep env-derived unless we later add CLI override
 
     try:
         process_tickets(
@@ -1130,6 +1243,8 @@ def main() -> None:
             not_relevant_path=Path(args["not_relevant_out"]) if isinstance(args, dict) else Path(getattr(args, "not_relevant_out")),
             model=model,
             api_key=api_key,
+            api_url=api_url,
+            project_id=project_id,
             limit_relevant=args.limit,
             max_calls=args.max_calls,
             max_tokens=args.max_tokens,

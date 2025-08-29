@@ -1,6 +1,6 @@
 # S4U JitBit Tickets — Export and LLM Processing
 
-This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM (Together.ai), and render them as PDF/DOCX documents.
+This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), and render them as PDF/DOCX documents.
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
@@ -42,11 +42,15 @@ Create a `.env` file in the repository root:
 JITBIT_API_TOKEN=your_jitbit_bearer_token_here
 JITBIT_BASE_URL=https://support.example.com
 
-# Required for LLM processing 
-TOGETHER_API_KEY=your_together_api_key_here
+# Required for LLM processing (Scaleway AI Gateway, OpenAI-compatible)
+SCW_SECRET_KEY=your_scaleway_api_key_here
+SCW_OPENAI_BASE_URL=https://api.scaleway.ai/v1/chat/completions
 
-# Optional LLM model override (defaults to Meta-Llama-3.1-70B-Instruct-Turbo)
-LLM_MODEL=meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+# Optional defaults and extras
+LLM_MODEL="gpt-oss-120b"
+SCW_DEFAULT_PROJECT_ID=your_project_id           # optional but recommended
+SCW_DEFAULT_ORGANIZATION_ID=your_org_id          # optional
+SCW_REGION=fr-par                                 # optional (not required for the fixed endpoint)
 ```
 
 **Security Note**: Never commit the `.env` file to version control. Ensure `.env` is included in your `.gitignore`.
@@ -262,11 +266,15 @@ Purpose:
 Environment:
 - Create a .env file in the repo root:
 ```
-TOGETHER_API_KEY=your_together_api_key_here
-# Optional (defaults to meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo if unset)
-LLM_MODEL=meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
-# Optional fallback:
-# TOGETHER_MODEL=...
+# Scaleway AI Gateway (OpenAI-compatible)
+SCW_SECRET_KEY=your_scaleway_api_key_here
+SCW_OPENAI_BASE_URL=https://api.scaleway.ai/v1/chat/completions
+# Model (example that works on Scaleway)
+LLM_MODEL="gpt-oss-120b"
+# Optional extras:
+SCW_DEFAULT_PROJECT_ID=your_project_id
+# SCW_DEFAULT_ORGANIZATION_ID=your_org_id
+# SCW_REGION=fr-par
 ```
 - Ensure .gitignore excludes .env.
 
@@ -347,8 +355,9 @@ Parameters:
   - Load the entire file into memory and process tickets in descending ticket_id order. Faster prioritization of new tickets but requires enough RAM
 
 Environment:
-- TOGETHER_API_KEY (required) — from .env or your shell env
-- LLM_MODEL (preferred) or TOGETHER_MODEL — model id string; defaults to meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+- SCW_SECRET_KEY (required) — from .env or your shell env
+- SCW_OPENAI_BASE_URL (required) — must be https://api.scaleway.ai/v1/chat/completions
+- LLM_MODEL (optional) — model id string; example "gpt-oss-120b" (defaults to Meta-Llama-3.1-70B-Instruct-Turbo if unset)
 
 Basic runs:
 - Default input/output paths:
@@ -449,8 +458,8 @@ Performance notes:
   - --newest-first loads all tickets into memory and sorts by ticket_id desc. Ensure adequate RAM for very large datasets.
 
 Troubleshooting:
-- Missing Together API key:
-  - Ensure .env contains TOGETHER_API_KEY.
+- Missing or invalid Scaleway credentials:
+  - Ensure .env contains SCW_SECRET_KEY and SCW_OPENAI_BASE_URL=https://api.scaleway.ai/v1/chat/completions.
 - LLM parse errors:
   - Inspect files under llm_parse_errors/.
   - Re-run with --only-ticket-id to isolate.
@@ -825,7 +834,7 @@ The repository generates several output files during processing:
 
 ### LLM Processing Issues  
 - Check `llm_parse_errors/` directory for parsing failures
-- Verify `TOGETHER_API_KEY` is valid and has sufficient credits
+- Verify `SCW_SECRET_KEY` is set and valid; also ensure `SCW_OPENAI_BASE_URL` is `https://api.scaleway.ai/v1/chat/completions`
 - Use `--only-ticket-id` flag to debug specific tickets
 - Reduce `--max-tokens` if hitting model limits
 
