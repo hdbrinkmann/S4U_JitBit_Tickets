@@ -253,10 +253,11 @@ Ticket item schema:
 ## 2) Analyze tickets with LLM (process_tickets_with_llm.py)
 
 Purpose:
-- Build an LLM prompt from each ticket’s subject, body, and comments.
+- Build an LLM prompt from each ticket's subject, body, and comments.
 - Ask the LLM to decide if the ticket has a real technical problem and a concrete solution (not trivial requests).
 - For relevant tickets, generate a concise problem and solution summary.
 - Aggregate image URLs (from ticket-level and comment-level attachments/HTML) into image_urls for downstream use. The LLM does not handle URLs.
+- **Automatically prefix all ticket IDs with "S4U_"** in the output format (e.g., ticket ID 98 becomes "S4U_98").
 
 Environment:
 - Create a .env file in the repo root:
@@ -283,7 +284,7 @@ Input:
 
 Outputs:
 - Ticket_Data.JSON — Array with compact summaries of relevant tickets:
-  - ticket_id, date, subject, problem, solution, image_urls
+  - ticket_id (with S4U_ prefix), date, subject, problem, solution, image_urls
 - not relevant.json — An object with "tickets": [ ...raw ticket objects... ] for manual review later.
 
 LLM Output Schema (enforced in prompt):
@@ -297,6 +298,7 @@ LLM Output Schema (enforced in prompt):
 }
 ```
 - The model is explicitly instructed NOT to include URLs; the processor aggregates image URLs into image_urls.
+- **Note**: The processor automatically adds "S4U_" prefix to ticket_id in the final output, so LLM returns numeric IDs but output contains strings like "S4U_98".
 
 Robust JSON parsing:
 - Removes Markdown code fences (``` / ```json).
@@ -418,7 +420,7 @@ Output schemas:
 ```
 [
   {
-    "ticket_id": 49,
+    "ticket_id": "S4U_49",
     "date": "2018-11-27T08:15:55.367Z",
     "subject": "Kurzes Betreff-Beispiel",
     "problem": "Markdown summary...",
