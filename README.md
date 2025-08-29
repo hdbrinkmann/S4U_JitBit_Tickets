@@ -812,6 +812,10 @@ The repository generates several output files during processing:
 | `*.pdf` | kb_to_pdf.py | Formatted PDF documents |
 | `*.docx` | tickets_to_docx.py | Formatted Word documents |
 
+### Note on JSON formatting and IDs
+- Ticket_Data.JSON is generated with Unicode-safe normalization to prevent JSON parse errors from curly quotes, non-breaking spaces/hyphens, ellipses, and similar characters. See JSON_Unicode_Fix_Documentation.md for the analysis and code examples used to fix these issues.
+- ticket_id values in Ticket_Data.JSON are strings prefixed with "S4U_" (e.g., "S4U_98"). Update downstream consumers to treat ticket_id as a string with this prefix.
+
 ## Troubleshooting
 
 ### API Authentication Issues
