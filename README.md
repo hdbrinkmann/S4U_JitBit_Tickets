@@ -4,6 +4,7 @@ This repository contains Python programs that work together to extract Jitbit ti
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
+- **jira_relevant_tickets.py** — Exports resolved Jira issues in the same JSON schema as the Jitbit exporter, including problem, support comments (non-customer), resolution date, and attachments, with filters for resolved-only and resolved-after date.
 - **process_tickets_with_llm.py** — Sends each ticket to an LLM to classify relevance and summarize problem/solution, writing compact outputs for downstream use (includes original Subject in the output summaries).
 - **kb_export_json.py** — Exports Jitbit Knowledge Base articles as JSON with BBCode to Markdown conversion and attachment extraction.
 - **kb_to_docx.py** — Renders Knowledge Base JSON to DOCX format with images and formatting.
@@ -41,6 +42,10 @@ Create a `.env` file in the repository root:
 # Required for ticket/KB export and API operations
 JITBIT_API_TOKEN=your_jitbit_bearer_token_here
 JITBIT_BASE_URL=https://support.example.com
+
+# Required for Jira export (Jira Cloud)
+JIRA_EMAIL=your_atlassian_email@example.com
+JIRA_API_TOKEN=your_jira_api_token
 
 # Required for LLM processing (Scaleway AI Gateway, OpenAI-compatible)
 SCW_SECRET_KEY=your_scaleway_api_key_here
@@ -252,6 +257,91 @@ Ticket item schema:
   ]
 }
 ```
+
+------------------------------------------------------------
+## 1a) Export resolved Jira tickets (jira_relevant_tickets.py)
+
+Purpose:
+- Export resolved Jira issues into the same JSON schema as the Jitbit exporter (JitBit_relevante_Tickets.json), including:
+  - problem (description as text), support-only comments, resolution name/date, attachments
+
+Configuration:
+- Set `JIRA_EMAIL` and `JIRA_API_TOKEN` in your `.env` file (see Environment Setup).
+- Adjust the Jira base URL in the script if needed:
+  - Open `jira_relevant_tickets.py` and set `JIRA_BASE_URL` (default is `https://timeplan.atlassian.net`).
+
+Filters:
+- `--resolved-only` restricts to issues in status category Done.
+- `--resolved-after YYYYMMDD` (or `YYYY-MM-DD`) includes only issues resolved on/after the given date (compares `resolutiondate`).
+
+Basic usage:
+```bash
+# Single issue, print details
+python3 jira_relevant_tickets.py --issue SUP-41210
+
+# Single issue, export to JSON schema compatible with the Jitbit exporter
+python3 jira_relevant_tickets.py --issue SUP-41210 --export JIRA_relevante_Tickets.json
+
+# Batch by JQL (preserves ORDER BY), only resolved after March 31, 2025
+python3 jira_relevant_tickets.py \
+  --jql "project=SUP order by resolutiondate DESC" \
+  --limit 50 \
+  --resolved-only \
+  --resolved-after 20250331 \
+  --export JIRA_relevante_Tickets.json
+```
+
+CLI Options:
+- `--issue KEY` — Specific issue key (e.g., SUP-41210)
+- `--jql "..."` — JQL for listing (ORDER BY preserved)
+- `--limit N` — Max results to fetch from search
+- `--export PATH` — Write JSON using Jitbit-like schema (default example: JIRA_relevante_Tickets.json)
+- `--resolved-only` — Only include issues in Done status category
+- `--resolved-after YYYYMMDD|YYYY-MM-DD` — Only include issues resolved on/after the date
+
+Output structure (JIRA_relevante_Tickets.json):
+- Mirrors the Jitbit exporter:
+```
+{
+  "export_info": {
+    "timestamp": "...",
+    "total_closed_tickets": <int>,
+    "total_comments": <int>,
+    "total_ticket_attachments": <int>,
+    "total_comment_attachments": 0,
+    "export_duration_seconds": <float>,
+    "filter_criteria": "JQL and filters applied",
+    "api_base_url": "https://your-domain.atlassian.net"
+  },
+  "tickets": [
+    {
+      "ticket_id": <int or string>,          // Jira numeric id when possible
+      "CategoryName": "<issuetype.name>",
+      "IssueDate": "<fields.created>",
+      "Subject": "<summary>",
+      "Body": "<description text>",           // rendered HTML stripped; ADF->text fallback
+      "Status": "<status.name>",
+      "Url": "https://.../browse/<KEY>",
+      "Attachments": [
+        { "FileName": "<filename>", "Url": "<content>", "Size": <int> }
+      ],
+      "kommentare": [
+        {
+          "CommentDate": "<created>",
+          "Body": "<plain text body>",
+          "UserName": "<author.displayName>",
+          "Attachments": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Notes:
+- Support comments exclude end customers (filters `author.accountType == "customer"`).
+- Jira attachments are issue-level; comment-level Attachments arrays are intentionally empty.
+- The exporter applies filters both in the search JQL and post-fetch (safety check on `resolutiondate`).
 
 ------------------------------------------------------------
 ## 2) Analyze tickets with LLM (process_tickets_with_llm.py)
