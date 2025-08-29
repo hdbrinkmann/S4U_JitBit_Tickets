@@ -225,7 +225,9 @@ class TogetherClient:
 # ---------------------------
 
 SYSTEM_PROMPT = """You analyze IT support tickets. Decide if the ticket addresses a real technical problem and a concrete solution (not a simple request like password reset, user creation, or similar routine tasks).
-If relevant, produce a concise summary that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content. Also remove any company names mentioned in the ticket. Use Markdown within the fields where asked.
+Produce a concise complete but relevant extract of the raw data that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content like disclaimers, etc. 
+
+Also remove any company names mentioned in the ticket. Use Markdown within the fields where asked. To not remove important context, keep any mentions of product or service names, error codes, or technical terms. Do not try to translate abbreviations or product names, just keep them as-is. For example, do not try to expand "AD" to "Active Directory" if the ticket uses "AD" or expand "NN" to something you may think it is. Just use "NN" in the extract. 
 
 Strictly output a single JSON object only (no code fences, no prose). Exact keys and schema:
 {
@@ -669,9 +671,13 @@ def normalize_summary(
     ticket_id = ticket.get("ticket_id")
     issue_date = ticket.get("IssueDate") or ""
     subject = ticket.get("Subject") or ""
+    ticket_url = ticket.get("Url") or ""
 
-    # Coerce and override ticket_id from source of truth
-    out_ticket_id = int(ticket_id) if isinstance(ticket_id, (int, float, str)) and str(ticket_id).isdigit() else ticket_id
+    # Coerce and override ticket_id from source of truth, add S4U_ prefix
+    if isinstance(ticket_id, (int, float, str)) and str(ticket_id).isdigit():
+        out_ticket_id = f"S4U_{int(ticket_id)}"
+    else:
+        out_ticket_id = f"S4U_{ticket_id}"
 
     problem = llm_obj.get("problem", "")
     if not isinstance(problem, str):
@@ -707,6 +713,7 @@ def normalize_summary(
         "subject": subject,
         "problem": problem,
         "solution": solution,
+        "ticket_url": ticket_url,
         "image_urls": images_dedup,
     }
 
@@ -999,8 +1006,8 @@ def main() -> None:
     parser.add_argument("--not-relevant-out", default="not relevant.json", help="Path for raw 'not relevant' tickets JSON.")
     parser.add_argument("--limit", type=int, default=None, help="Number of relevant tickets to collect (counts relevant only).")
     parser.add_argument("--max-calls", type=int, default=None, help="Safety cap on total LLM calls.")
-    parser.add_argument("--max-tokens", type=int, default=3000, help="max_tokens for Together.ai.")
-    parser.add_argument("--temperature", type=float, default=0.2, help="temperature for Together.ai.")
+    parser.add_argument("--max-tokens", type=int, default=5000, help="max_tokens for Together.ai.")
+    parser.add_argument("--temperature", type=float, default=0.0, help="temperature for Together.ai.")
     parser.add_argument("--start-index", type=int, default=0, help="Start processing from this ticket index.")
     parser.add_argument("--append", action="store_true", help="Append to existing output files if present.")
     parser.add_argument("--only-ticket-id", type=int, default=None, help="Process only the ticket with this ID.")
