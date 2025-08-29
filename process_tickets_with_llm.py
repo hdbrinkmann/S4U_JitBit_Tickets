@@ -58,6 +58,7 @@ import json
 import os
 import random
 import re
+import unicodedata
 import sys
 import time
 from pathlib import Path
@@ -341,6 +342,93 @@ def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
 # ---------------------------
 # JSON parsing / normalization
 # ---------------------------
+
+# Unicode normalization and safe JSON serialization helpers
+
+# Patterns to detect problematic characters (for optional validation/logging)
+PROBLEMATIC_QUOTES_PATTERN = r'[\u201C\u201D\u201E\u201A\u2018\u2019]'
+PROBLEMATIC_WHITESPACE_PATTERN = r'[\u2011\u202F\u00A0\u2013\u2014]'
+
+def normalize_text_for_json(text: Any) -> Any:
+    """
+    Normalize text to prevent JSON parsing issues in downstream consumers.
+    - Map fancy quotes/dashes and non-breaking spaces to ASCII equivalents
+    - Apply NFKC to standardize forms
+    - Strip other ASCII control characters except newline/tab (kept)
+    """
+    if not isinstance(text, str):
+        return text
+
+    # Direct replacements for known problematic characters
+    unicode_replacements = {
+        '\u2011': '-',    # Non-breaking hyphen → regular hyphen
+        '\u201C': '"',    # Left double quotation mark → regular quote
+        '\u201D': '"',    # Right double quotation mark → regular quote
+        '\u201E': '"',    # Double low-9 quotation mark → regular quote
+        '\u2018': "'",    # Left single quotation mark → apostrophe
+        '\u2019': "'",    # Right single quotation mark → apostrophe
+        '\u201A': "'",    # Single low-9 quotation mark → apostrophe
+        '\u202F': ' ',    # Narrow no-break space → regular space
+        '\u00A0': ' ',    # Non-breaking space → regular space
+        '\u2013': '-',    # En dash → hyphen
+        '\u2014': '-',    # Em dash → hyphen
+        '\u2026': '...',  # Horizontal ellipsis → three dots
+    }
+
+    for u, r in unicode_replacements.items():
+        text = text.replace(u, r)
+
+    # Normalize Unicode to NFKC (compatibility composition)
+    text = unicodedata.normalize('NFKC', text)
+
+    # Remove other control characters (keep \n and \t)
+    text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
+
+    return text
+
+
+def has_problematic_unicode(text: str) -> bool:
+    """Check if text contains characters that could cause downstream JSON issues."""
+    if not isinstance(text, str):
+        return False
+    return (re.search(PROBLEMATIC_QUOTES_PATTERN, text) is not None or
+            re.search(PROBLEMATIC_WHITESPACE_PATTERN, text) is not None)
+
+
+def normalize_recursive(obj: Any) -> Any:
+    """Recursively normalize all string values in dict/list structures."""
+    if isinstance(obj, dict):
+        return {k: normalize_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [normalize_recursive(v) for v in obj]
+    if isinstance(obj, str):
+        return normalize_text_for_json(obj)
+    return obj
+
+
+def safe_json_dump(data: Any, **kwargs) -> str:
+    """
+    Safely serialize data to JSON with Unicode normalization.
+    Always enforces ensure_ascii=False unless explicitly overridden.
+    """
+    normalized_data = normalize_recursive(data)
+    if 'ensure_ascii' not in kwargs:
+        kwargs['ensure_ascii'] = False
+    return json.dumps(normalized_data, **kwargs)
+
+
+def validate_json_output(json_string: str) -> Tuple[bool, str]:
+    """Validate that generated JSON is parseable with Python's strict JSON parser."""
+    try:
+        parsed = json.loads(json_string)
+        # Provide a basic count summary when possible
+        if isinstance(parsed, list):
+            return True, f"Valid JSON array with {len(parsed)} elements"
+        if isinstance(parsed, dict):
+            return True, f"Valid JSON object with {len(parsed)} top-level keys"
+        return True, "Valid JSON"
+    except json.JSONDecodeError as e:
+        return False, f"JSON Error: {e.msg} at line {e.lineno}, column {e.colno}"
 
 JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -639,6 +727,9 @@ def parse_and_validate_llm_json(raw_text: str) -> Optional[Dict[str, Any]]:
     # Second, sanitize control chars, NBSPs, trailing commas, and flatten newlines
     s = obj_str
     try:
+        # Normalize problematic Unicode quotes/dashes/spaces in the JSON text itself
+        # This converts fancy quotes used as delimiters into ASCII quotes so json.loads can parse.
+        s = normalize_text_for_json(s)
         s = s.replace("\u00A0", " ")
         s = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", s)
         s = re.sub(r",\s*([}\]])", r"\1", s)
@@ -781,9 +872,23 @@ def json_load(path: Path) -> Any:
 
 
 def atomic_write_json(path: Path, data: Any) -> None:
+    """
+    Atomically write JSON to disk after normalizing Unicode to ensure downstream
+    consumers don't fail on fancy quotes, NBSPs, or other problematic characters.
+    """
     tmp = path.with_suffix(path.suffix + ".tmp")
+
+    # Produce normalized JSON string
+    json_string = safe_json_dump(data, indent=2)
+
+    # Validate parseability
+    ok, msg = validate_json_output(json_string)
+    if not ok:
+        raise ValueError(f"Generated invalid JSON for {path}: {msg}")
+
     with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write(json_string)
+
     tmp.replace(path)
 
 # ---------------------------
