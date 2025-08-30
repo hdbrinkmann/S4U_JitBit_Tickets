@@ -375,6 +375,55 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
     total_ticket_attachments = 0
     total_comment_attachments = 0
     n = len(issue_keys)
+    last_save_time = start_time
+    save_interval = 30  # Save every 30 seconds
+    save_every_n_tickets = 10  # Also save every 10 tickets
+
+    def save_progress(force_save=False):
+        """Save current progress to file"""
+        nonlocal last_save_time
+        current_time = time.time()
+        
+        if not force_save and current_time - last_save_time < save_interval:
+            return
+            
+        if not tickets:  # No tickets to save yet
+            return
+            
+        export_data = {
+            "export_info": {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "total_closed_tickets": len(tickets),
+                "total_comments": total_comments,
+                "total_ticket_attachments": total_ticket_attachments,
+                "total_comment_attachments": total_comment_attachments,
+                "export_duration_seconds": current_time - start_time,
+                "filter_criteria": (filter_criteria or "") + f" [PARTIAL: {len(tickets)}/{n} tickets processed]",
+                "api_base_url": JIRA_BASE_URL,
+                "status": "IN_PROGRESS"
+            },
+            "tickets": tickets
+        }
+        
+        temp_path = out_path + ".tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            # Atomic move to avoid corrupting the main file
+            import shutil
+            shutil.move(temp_path, out_path)
+            
+            last_save_time = current_time
+            log_progress(f"[AUTOSAVE] Saved {len(tickets)}/{n} tickets to {out_path}")
+            
+        except Exception as e:
+            log_progress(f"[WARNING] Failed to save progress: {e}")
+            # Remove temp file if it exists
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
     for idx, key in enumerate(issue_keys, 1):
         if idx == 1 or idx % 10 == 0 or idx == n:
@@ -409,15 +458,8 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
                 "Attachments": []
             })
 
-        # ticket_id should be int if possible (Jira's 'id' is numeric string)
-        tid = d.get("id")
-        if isinstance(tid, str) and tid.isdigit():
-            try:
-                ticket_id = int(tid)
-            except Exception:
-                ticket_id = tid
-        else:
-            ticket_id = tid or d.get("key")
+        # ticket_id should be the key string (e.g., "SUP1234"), not the internal numeric ID
+        ticket_id = d.get("key")
 
         tickets.append({
             "ticket_id": ticket_id,
@@ -436,7 +478,14 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
         # We are not extracting per-comment attachments from Jira; keep 0
         total_comment_attachments += 0
 
+        # Save progress periodically
+        if idx % save_every_n_tickets == 0 or time.time() - last_save_time >= save_interval:
+            save_progress()
+
         time.sleep(0.05)  # be polite
+
+    # Final save to ensure all data is persisted with completed status
+    save_progress(force_save=True)
 
     export_data = {
         "export_info": {
@@ -447,7 +496,8 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
             "total_comment_attachments": total_comment_attachments,
             "export_duration_seconds": time.time() - start_time,
             "filter_criteria": filter_criteria or "",
-            "api_base_url": JIRA_BASE_URL
+            "api_base_url": JIRA_BASE_URL,
+            "status": "COMPLETED"
         },
         "tickets": tickets
     }

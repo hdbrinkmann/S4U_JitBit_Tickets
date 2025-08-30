@@ -1,6 +1,6 @@
 # S4U JitBit Tickets — Export and LLM Processing
 
-This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), and render them as PDF/DOCX documents.
+This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), optionally deduplicate quasi-duplicate tickets using multilingual embeddings, and render them as PDF/DOCX documents.
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
@@ -11,6 +11,7 @@ This repository contains Python programs that work together to extract Jitbit ti
 - **tickets_to_docx.py** — Converts ticket summaries to DOCX format.
 
 ## Utility Scripts:
+- **scripts/dedupe_tickets.py** — Semantic de-duplication of tickets (quasi-duplicates) using multilingual embeddings via Scaleway (OpenAI-compatible). Produces canonical ticket set plus audit files.
 - **scripts/jitbit_fetch_attachment.py** — Standalone utility to fetch individual Jitbit attachments via API.
 - **scripts/test_llm_parse_errors.py** — Test script for debugging LLM parsing issues.
 
@@ -56,6 +57,10 @@ LLM_MODEL="gpt-oss-120b"
 SCW_DEFAULT_PROJECT_ID=your_project_id           # optional but recommended
 SCW_DEFAULT_ORGANIZATION_ID=your_org_id          # optional
 SCW_REGION=fr-par                                 # optional (not required for the fixed endpoint)
+
+# Optional for embeddings (dedupe)
+SCW_API_KEY=your_scaleway_api_key_here           # alias for SCW_SECRET_KEY
+SCW_EMBEDDING_MODEL=bge-multilingual-gemma2      # default if unset
 ```
 
 **Security Note**: Never commit the `.env` file to version control. Ensure `.env` is included in your `.gitignore`.
@@ -288,9 +293,8 @@ python3 jira_relevant_tickets.py --issue SUP-41210 --export JIRA_relevante_Ticke
 # Batch by JQL (preserves ORDER BY), only resolved after March 31, 2025
 python3 jira_relevant_tickets.py \
   --jql "project=SUP order by resolutiondate DESC" \
-  --limit 50 \
   --resolved-only \
-  --resolved-after 20250331 \
+  --resolved-after 20221231 \
   --export JIRA_relevante_Tickets.json
 
 # Date range (inclusive) and append to an existing file (de-duplicated)
@@ -597,6 +601,90 @@ Repository outputs:
 - not relevant.json — Produced by process_tickets_with_llm.py (raw not-relevant tickets).
 
 ------------------------------------------------------------
+## 2a) Deduplicate ticket summaries (scripts/dedupe_tickets.py)
+
+Purpose:
+- Detect and merge quasi-duplicate tickets that describe the same problem/solution in different words.
+- Produce a canonical set of tickets while keeping an audit trail of merged items.
+
+How it works:
+- Builds a normalized text per ticket by concatenating subject + problem + solution and removing transient tokens (URLs, NN123 codes, PERSNR, etc.) while keeping domain-relevant tokens (e.g., “Step 408”, account numbers).
+- Computes multilingual sentence embeddings via Scaleway’s OpenAI-compatible embeddings endpoint using the model `bge-multilingual-gemma2` (default).
+- Creates a similarity graph using cosine similarity; edges above a threshold form clusters.
+- Picks a representative per cluster (most informative: longest solution; fallbacks to longest problem/subject).
+- Writes:
+  - `tickets_dedup.json` — canonical tickets with `duplicates: [ ... ]` and `cluster_id`
+  - `duplicate_groups.json` — full cluster membership with indices and ticket IDs
+  - `needs_review.csv` — borderline similar pairs for manual review (gray zone between thresholds)
+
+Inputs:
+- Expects a list of tickets containing at least `subject`, `problem`, `solution`. Works with `Ticket_Data.JSON` or test files (e.g., `Ticket_Data_TEST.JSON`).
+
+Environment:
+- Uses `.env` (same loader as process_tickets_with_llm.py)
+```
+SCW_SECRET_KEY=...       # or SCW_API_KEY
+SCW_OPENAI_BASE_URL=https://api.scaleway.ai/v1/chat/completions
+SCW_PROJECT_ID=...       # optional
+SCW_REGION=fr-par        # optional; region endpoints are attempted automatically
+SCW_EMBEDDING_MODEL=bge-multilingual-gemma2  # override if needed
+```
+
+Dependencies:
+- `requests` (already part of base requirements)
+
+Basic usage:
+```bash
+# Run on LLM summaries (recommended)
+python3 scripts/dedupe_tickets.py \
+  --input Ticket_Data.JSON \
+  --out tickets_dedup.json \
+  --groups-out duplicate_groups.json \
+  --review-out needs_review.csv \
+  --threshold 0.84 \
+  --threshold-low 0.78
+```
+
+Examples and tuning:
+```bash
+# Slightly more aggressive merging
+python3 scripts/dedupe_tickets.py -i Ticket_Data.JSON --threshold 0.82 --threshold-low 0.76
+
+# Dry-run to see summary without writing files
+python3 scripts/dedupe_tickets.py -i Ticket_Data.JSON --dry-run
+
+# Batch size for embedding calls (default 64)
+python3 scripts/dedupe_tickets.py -i Ticket_Data.JSON --batch-size 32
+```
+
+Outputs:
+- `tickets_dedup.json` — same ticket schema as input entries plus:
+  - `duplicates`: string array of ticket_ids that were merged into the canonical record
+  - `cluster_id`: numeric identifier of the cluster
+- `duplicate_groups.json` — array of:
+  - `cluster_id`, representative index/ID, members (indices and ticket IDs), size
+- `needs_review.csv` — semicolon-separated rows of:
+  - `ticket_id_A;ticket_id_B;similarity;subject_A;subject_B` for pairs in gray zone (≥ threshold-low and < threshold)
+
+Thresholds:
+- `--threshold` (default 0.84): pairs at or above this cosine similarity auto-merge into the same cluster
+- `--threshold-low` (default 0.78): gray-zone lower bound; pairs here are listed in needs_review.csv but not merged
+- Start with defaults; lower threshold slightly if too few merges, or raise if you observe false merges
+
+Integration into workflow:
+- After generating `Ticket_Data.JSON` via the LLM step:
+```bash
+python3 scripts/dedupe_tickets.py -i Ticket_Data.JSON
+# then pass tickets_dedup.json to document rendering or analytics
+python3 tickets_to_docx.py --input tickets_dedup.json
+```
+
+Troubleshooting:
+- Ensure `.env` has valid Scaleway key and base URL; the script derives an `/embeddings` endpoint from your OpenAI-compatible base.
+- If you see zero merges but expect some, lower `--threshold` to 0.82 or 0.80 and re-run.
+- For very small datasets, borderline pairs may be empty; this is normal.
+
+------------------------------------------------------------
 ## 3) Render Jitbit Knowledgebase JSON to a single PDF (kb_to_pdf.py)
 
 Purpose:
@@ -817,7 +905,7 @@ Flags and behavior:
 - --timeout SECONDS
   - HTTP timeout per image. Default: 15.0
 - --image-placeholder true|false
-  - Insert a textual placeholder with a link when an image fails to load. Default: true
+  - Insert a textual placeholder when an image fails to load. Default: true
 - --verbose true|false
   - Log image requests and decisions to stderr.
 
@@ -829,6 +917,12 @@ Notes & troubleshooting:
 
 ------------------------------------------------------------
 ## Utility Scripts
+
+### scripts/dedupe_tickets.py
+
+Purpose:
+- Semantic deduplication of tickets using multilingual embeddings via Scaleway.
+- Produces canonical ticket set and audit outputs (see section 2a).
 
 ### scripts/jitbit_fetch_attachment.py
 
@@ -921,13 +1015,22 @@ python3 process_tickets_with_llm.py --limit 50 --max-calls 100
 ls -la llm_parse_errors/
 ```
 
+### 3a. Deduplicate Ticket Summaries (Optional but recommended)
+```bash
+# Remove quasi-duplicates; tune thresholds for your data
+python3 scripts/dedupe_tickets.py -i Ticket_Data.JSON --threshold 0.84 --threshold-low 0.78
+
+# Use the canonical set for downstream rendering or analytics
+python3 tickets_to_docx.py --input tickets_dedup.json
+```
+
 ### 4. Generate Documents
 ```bash
 # Create PDF from knowledge base
 python3 kb_to_pdf.py -i JitBit_Knowledgebase.json -o KB.pdf
 
-# Create DOCX from ticket summaries
-python3 tickets_to_docx.py -i Ticket_Data.JSON -o Tickets.docx
+# Create DOCX from ticket summaries (deduped set recommended)
+python3 tickets_to_docx.py -i tickets_dedup.json -o Tickets.docx
 ```
 
 ## Output Files
@@ -939,6 +1042,9 @@ The repository generates several output files during processing:
 | `JitBit_relevante_Tickets.json` | ticket_relevante_felder.py | Raw ticket data with comments and attachments |
 | `JitBit_Knowledgebase.json` | kb_export_json.py | Knowledge base articles with BBCode conversion |
 | `Ticket_Data.JSON` | process_tickets_with_llm.py | LLM-processed ticket summaries (relevant only) |
+| `tickets_dedup.json` | scripts/dedupe_tickets.py | Canonical tickets with `duplicates` list and `cluster_id` |
+| `duplicate_groups.json` | scripts/dedupe_tickets.py | Full cluster membership and representative |
+| `needs_review.csv` | scripts/dedupe_tickets.py | Borderline similar pairs to manually check |
 | `not relevant.json` | process_tickets_with_llm.py | Raw tickets marked as not relevant by LLM |
 | `llm_parse_errors/*.txt` | process_tickets_with_llm.py | Debug files for LLM parsing failures |
 | `*.pdf` | kb_to_pdf.py | Formatted PDF documents |
@@ -961,9 +1067,15 @@ The repository generates several output files during processing:
 - Use `--only-ticket-id` flag to debug specific tickets
 - Reduce `--max-tokens` if hitting model limits
 
+### Embeddings/Dedupe Issues
+- Ensure `SCW_SECRET_KEY`/`SCW_API_KEY` and `SCW_OPENAI_BASE_URL` are set
+- If no merges are found, lower `--threshold` slightly (e.g., 0.82) and re-run
+- If false merges occur, raise `--threshold` (e.g., 0.86) or increase gray zone by raising `--threshold-low`
+- Review `duplicate_groups.json` and `needs_review.csv` to calibrate thresholds
+
 ### Memory Issues with Large Datasets
 - Install `ijson` for streaming: `pip3 install -U ijson` 
-- Avoid `--newest-first` flag for very large exports
+- Avoid `--newest-first` and install ijson to enable streaming
 - Process in smaller batches using `--limit` and `--start-index`
 
 ### Image/Attachment Issues

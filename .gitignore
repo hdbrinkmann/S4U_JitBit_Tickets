@@ -46,8 +46,9 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Logs
+# Logs and Textfiles
 *.log
+*.txt
 
 # JSON - never commit JSON files
 *.[Jj][Ss][Oo][Nn]

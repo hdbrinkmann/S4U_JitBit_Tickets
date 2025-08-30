@@ -37,8 +37,8 @@ Environment:
 
 Usage:
   python3 process_tickets_with_llm.py \
-    --input JitBit_relevante_Tickets.json \
-    --output Ticket_Data_TEST.JSON \
+    --input Jira_relevante_Tickets.json \
+    --output Ticket_Data_JIRA.JSON \
     --not-relevant-out "not relevant.json" \
     --limit 50 \
     --max-calls 200 \
@@ -316,7 +316,8 @@ class OpenAICompatibleClient:
 # Prompting
 # ---------------------------
 
-SYSTEM_PROMPT = """You analyze IT support tickets. Decide if the ticket addresses a real technical problem and a concrete solution (not a simple request like password reset, user creation, or similar routine tasks).
+SYSTEM_PROMPT = """You analyze IT support tickets. Decide if the ticket addresses a real technical problem and a concrete solution (not a simple request like password reset, user creation, or similar routine tasks). Also not relevant are tickets that obivously contain only spam, jokes, or gibberish. Not relevant are also tickets that refer to a bug when the solution is that the bug is fixed and that the system now works as intended.
+
 Produce a concise complete but relevant extract of the raw data that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content like disclaimers, etc. 
 
 Also remove any company names mentioned in the ticket. Use Markdown within the fields where asked. To not remove important context, keep any mentions of product or service names, error codes, or technical terms. Do not try to translate abbreviations or product names, just keep them as-is. For example, do not try to expand "AD" to "Active Directory" if the ticket uses "AD" or expand "NN" to something you may think it is. Just use "NN" in the extract. 
@@ -334,7 +335,7 @@ If the ticket is not relevant, set:
 
 Do not include any URLs in the JSON. The system will extract URLs separately.
 
-IMPORTANT LANGUAGE INSTRUCTIONS: ALWAYS USE THE LANGUAGE OF THE TICKET (e.g., if the ticket is in German, respond in German).
+IMPORTANT LANGUAGE INSTRUCTIONS: ALWAYS USE THE LANGUAGE OF THE TICKET (e.g., if the ticket is in German, respond in German), if it is in dashish, respond in danish, if it is in english, respond in english.
 IMPORTANT DATA PROTECTION INSTRUCTIONS: Do not include any personal data, email addresses, or names in the output. YOU ABSOLUTELY MUST anonymize any such information from the problem and solution fields!
 
 """
@@ -855,9 +856,19 @@ def normalize_summary(
     subject = ticket.get("Subject") or ""
     ticket_url = ticket.get("Url") or ""
 
-    # Coerce and override ticket_id from source of truth, add S4U_ prefix
-    if isinstance(ticket_id, (int, float, str)) and str(ticket_id).isdigit():
-        out_ticket_id = f"S4U_{int(ticket_id)}"
+    # Coerce and override ticket_id from source of truth, add S4U_ prefix only if no string prefix exists
+    if isinstance(ticket_id, (int, float, str)):
+        ticket_str = str(ticket_id)
+        # Check if ticket ID already has a string prefix (like SUP, TMS, etc.)
+        if ticket_str.isdigit():
+            # Pure numeric ID, add S4U_ prefix
+            out_ticket_id = f"S4U_{int(ticket_id)}"
+        elif re.match(r'^[A-Z]+_?\d+', ticket_str):
+            # Already has string prefix (like SUP123, TMS_456), keep as-is
+            out_ticket_id = ticket_str
+        else:
+            # Other cases, add S4U_ prefix
+            out_ticket_id = f"S4U_{ticket_id}"
     else:
         out_ticket_id = f"S4U_{ticket_id}"
 

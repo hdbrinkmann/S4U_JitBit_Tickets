@@ -1,0 +1,125 @@
+ticket_id_A;ticket_id_B;similarity;subject_A;subject_B
+S4U_32;S4U_138;0.8338;"Linhardt: Report ""SAP Upload""";"Linhardt: Report ""SAP Upload"""
+S4U_84;S4U_20882;0.8019;WG: Ich sehe im Dashboard keine Daten;WG: 4PLAN I Support I keine Daten einsehbar
+S4U_113;S4U_4614;0.8184;Linhardt: Fehler Import SAP;Linhardt: Fehler Import
+S4U_119;S4U_1033;0.7826;Linhardt: Fehler Import SAP KST Kontenwerte;WG: Linhardt: Fehler Import  SAP KST Kontenwerte 
+S4U_127;S4U_20488;0.8304;kein Zugriff auf 4Plan;Server nicht erreichbar
+S4U_139;S4U_7807;0.8028;Anmeldung in 4Plan schlägt fehl;Fehlermeldung
+S4U_173;S4U_176;0.7823;Fehlermeldung 3;"WG: Fehlermeldung 3 ; Beispiel Controllerliste"
+S4U_208;S4U_385;0.8104;IKEA - Not possible to login to 4Plan;"FW: Unable to login to 4plan; 2 users"
+S4U_210;S4U_340;0.8322;Keine Verbindung zum Server ...;FW: CANNOT ACCESS 4Plan
+S4U_236;S4U_22560;0.8198;4Plan aktuell noch gesperrt;4Plan ist gesperrt
+S4U_249;S4U_250;0.7996;Fehlermeldung bei Export;"Fehler: Bericht ""Export_CO"""
+S4U_339;S4U_20487;0.8188;Fehler: Keine Verbindung möglich;kein Zugriff auf 4Plan
+S4U_340;S4U_15302;0.8274;FW: CANNOT ACCESS 4Plan;kein Zugang zu 4Plan
+S4U_397;S4U_23042;0.7855;Error when downloading from normal 4plan to excel...;Download Excel aus 4Plan
+S4U_419;S4U_7670;0.7821;Linhardt: Bericht;Linhardt: Fehler Neurechnen
+S4U_441;S4U_1356;0.8129;4Plan geplanter Austritt nicht wirksam;Fehler bei Austritt
+S4U_525;S4U_23200;0.8016;4 Plan Bericht;4 Plan - Fehlerhafter Masterreport
+S4U_537;S4U_23053;0.8021;CH IKEA - Import März;Error 4PLAN Stammdatenimport (Mandant: EV)
+S4U_543;S4U_762;0.8115;Fehlermeldung 4PLAN;4Plan-Fehler
+S4U_607;S4U_20487;0.7984;Probleme beim Zugriff auf 4Plan;kein Zugriff auf 4Plan
+S4U_608;S4U_1356;0.8086;Import Probleme MA Stammdaten;Fehler bei Austritt
+S4U_630;S4U_734;0.8063;IKEA Schweiz - Login nicht mehr möglich;User kann sich nicht mehr einloggen - IKEA Schweiz
+S4U_641;S4U_7896;0.7842;AW: Auffälligkeit: ist-Daten trotz Austritt;Problem bei Austritt
+S4U_643;S4U_1163;0.8052;4Plan Fehlermeldung;FW: Fehler bei 4PLAN start
+S4U_668;S4U_1246;0.7933;Import Juli/ Frage EILT!!;Import von Daten
+S4U_712;S4U_718;0.8307;WG: Re: WG: [EXT] Arbeitslaptop Biotronik - Fehlermeldung bei 4Plan;WG: Arbeitslaptop Biotronik - Fehlermeldung bei 4Plan
+S4U_713;S4U_23075;0.8303;4Plan-Fehler beim Aufruf Berichtswesen;Fehlermeldung bei Aufruf 4PLAN
+S4U_755;S4U_1195;0.8152;Notweniger Support / Eilt!;Notweniger Support / Eilt!
+S4U_762;S4U_1273;0.7887;4Plan-Fehler;Fehlermeldung bei Anmeldung in 4Plan
+S4U_776;S4U_7639;0.8139;weiterer Benutzer 4PLAN (ab sofort);Fehlermeldung beim Einloggen
+S4U_819;S4U_4614;0.8077;Linhardt: Fehler Import SAP Abrechnungsdaten;Linhardt: Fehler Import
+S4U_853;S4U_23075;0.8012;4Plan Intergration;Fehlermeldung bei Aufruf 4PLAN
+S4U_857;S4U_1031;0.8355;Linhardt: Fehler Import  SAP KST Kontenwerte;AW: Linhardt: Fehler Import  SAP KST Kontenwerte 
+S4U_863;S4U_1109;0.7978;4 Plan Anmeldung nicht möglich;Fehler beim Anmelden
+S4U_883;S4U_8180;0.8091;4Plan Fehlermeldung beim Einloggen im Admin/ eilt;Fehlermeldung Log-in 4PLAN
+S4U_908;S4U_1405;0.8086;Uniper 4Admin/4PLAN - Batchjob Erstellung Exportdatei für BW;Uniper 4Admin/4PLAN - Batchjob Erstellung Exportdatei für BW
+S4U_932;S4U_22560;0.7856;FW: 4Plan Locked or Down?;4Plan ist gesperrt
+S4U_947;S4U_7740;0.8046;Fehlermeldung - 4PLAN;Kein Zugang 4Plan Admin
+S4U_952;S4U_954;0.8036;Installation 4Plan Professional;Neuinstallation 4Plan
+S4U_975;S4U_20659;0.7973;Fehlermeldung bei Import Mitarbeiterdaten - 4Integration Schritt 4;Einspielung Ist-Daten über 4plan Integration schlägt fehl
+S4U_1023;S4U_20527;0.8150;WG: Zugang 4plan -  neues Zertifikat, neues Passwort;WG: 4Plan - neues Zertifikat
+S4U_1102;S4U_20527;0.7976;WG: 4Plan Delphine Saucier Problem;WG: 4Plan - neues Zertifikat
+S4U_1109;S4U_22831;0.8173;Fehler beim Anmelden;Anmeldung bei 4Plan nicht möglich
+S4U_1113;S4U_7769;0.8251;Import 4 Plan Stammdaten 03/2021 fehlerhaft!;HILFE - Stammdatenimport 04/2022 hat nicht geklappt trotz korrekter Datei aus Paisy
+S4U_1125;S4U_1126;0.7894;Uniper_2021 4Integration - Job 000- OrgUnits Neuanlage;Uniper_2021 4Integration - Jobs 70 - Benelux Importe
+S4U_1163;S4U_7631;0.8036;FW: Fehler bei 4PLAN start;WG: Fehlermeldung 4PLAN
+S4U_1190;S4U_20832;0.7991;Fehler bei Anmeldung;Fehlermeldung nach der Anmeldung bei 4PLAN
+S4U_1246;S4U_20618;0.8203;Import von Daten;WG: Fehlermeldung Datenimport
+S4U_1261;S4U_4614;0.8136;Linhardt: Fehler Import SAP;Linhardt: Fehler Import
+S4U_1273;S4U_20832;0.8097;Fehlermeldung bei Anmeldung in 4Plan;Fehlermeldung nach der Anmeldung bei 4PLAN
+S4U_1280;S4U_7639;0.8172;Login funktioniert nicht mehr;Fehlermeldung beim Einloggen
+S4U_1290;S4U_23321;0.7977;Importfehler;Fehler beim IST-Import
+S4U_1325;S4U_1426;0.7901;Bericht wird nicht dargestellt;WG: 4PLAN: Report-Download nicht möglich
+S4U_1333;S4U_1377;0.8131;WG: 4 Plan;WG: 4Plan Probleme
+S4U_1356;S4U_7896;0.8296;Fehler bei Austritt;Problem bei Austritt
+S4U_1378;S4U_1382;0.7892;WG: Magst du es mit 4plan nochmal versuchen, danke.;4plan Zugang Silja Ludwig
+S4U_1426;S4U_21245;0.7821;WG: 4PLAN: Report-Download nicht möglich;WG: 4plan Fehlermeldung
+S4U_1451;S4U_20812;0.8004;Fehlermeldung im Dashboard bei User Sebastian Donat;Fehlermeldung bei Aufruf 4PLAN
+S4U_1481;S4U_7936;0.7833;WG: D R I N G E N D : Fehler bei 4Plan (Freitag klappte noch alles);WG: 4PLAN Fehlermeldung beim Öffnen der Software
+S4U_2536;S4U_8180;0.8335;Zugang zu 4Plan;Fehlermeldung Log-in 4PLAN
+S4U_3543;S4U_20864;0.8162;Fehlermeldung - Login nicht möglich;Keine Verbindung
+S4U_4548;S4U_7639;0.7952;Passwortänderung mit Fehler;Fehlermeldung beim Einloggen
+S4U_4570;S4U_23008;0.8032;unbez. Stunden Import Fehlermeldung;Fehler Import 11.2024 (31 Daten importieren Stellen)
+S4U_4585;S4U_4590;0.8205;erneutes Importproblem 4Plan;erneutes Importproblem 4Plan ( zu hohe Leitendenumlage ab Dezember 2021)
+S4U_4589;S4U_7706;0.7839;Berichte generieren zeitweise nicht möglich;Zugriff Berichte
+S4U_4614;S4U_10255;0.7865;Linhardt: Fehler Import;Linhardt: Fehlermeldung Import
+S4U_7631;S4U_23480;0.8119;WG: Fehlermeldung 4PLAN;WG: Fehlermeldung - 4Plan öffnet sich nicht mehr
+S4U_7639;S4U_22902;0.8282;Fehlermeldung beim Einloggen;Fehlermeldung bei Aufruf 4PLAN
+S4U_7673;S4U_20618;0.7873;Fehlermeldung beim Datenimport;WG: Fehlermeldung Datenimport
+S4U_7688;S4U_8031;0.8154;Hilfe - Stammdatenimport 02/2022 hat nicht geklappt;Stammdatenimport 10/2022 klappt leider nicht / es wurden keine Daten eingespielt
+S4U_7706;S4U_23181;0.8138;Zugriff Berichte;4Plan Berichtswesen
+S4U_7728;S4U_7770;0.8078;03/2022 Stamm und Bewegungsdatenimport / Werte werden nicht in der roten Kachel angezeigt;4Plan Fehler Stammdaten 04/2022 - rote Kachel keine Daten mehr
+S4U_7740;S4U_20487;0.7888;Kein Zugang 4Plan Admin;kein Zugriff auf 4Plan
+S4U_7766;S4U_10251;0.7899;Fehler beim Zugriff auf das EVE;User - Zertifikate abgelaufen
+S4U_7786;S4U_8003;0.8161;Goethe EU Tender- Fehler beim Kopieren der Datenart;Goethe: Fehler bei Kopie der Datenarten m EU TENDER mandant
+S4U_7807;S4U_21333;0.7818;Fehlermeldung;Fehlermeldung bei Aufruf 4PLAN User 4plan\jan.polier
+S4U_7924;S4U_20487;0.8018;4Plan Rossmann nicht erreichbar;kein Zugriff auf 4Plan
+S4U_7936;S4U_23480;0.8262;WG: 4PLAN Fehlermeldung beim Öffnen der Software;WG: Fehlermeldung - 4Plan öffnet sich nicht mehr
+S4U_8125;S4U_20913;0.7893;Datenimport Gehaltsfreigabe neue Mitarbeiter (NN-Stellen) Fehler;Fehler Import NN Handling
+S4U_8174;S4U_22757;0.8294;kein Zugriff auf 4Plan;kein Zugriff auf 4Plan möglich
+S4U_8180;S4U_22772;0.8378;Fehlermeldung Log-in 4PLAN;URGENT! 4plan login error
+S4U_8182;S4U_22831;0.7893;Keine Anmeldung in 4Plan möglich;Anmeldung bei 4Plan nicht möglich
+S4U_10231;S4U_22831;0.7886;4plan Anmeldung nicht möglich;Anmeldung bei 4Plan nicht möglich
+S4U_15302;S4U_22702;0.8023;kein Zugang zu 4Plan;4PLAN nicht erreichbar - Prio Hoch
+S4U_15303;S4U_20487;0.7862;JSMD || Website nicht erreichbar;kein Zugriff auf 4Plan
+S4U_15304;S4U_15306;0.8152;4Plan lässt sich nicht öffnen - Fehlermeldung: Verbindung mit Remoteserver kann nicht hergestellt werden;4Plan - Fehler beim Öffnen der Applikation
+S4U_15306;S4U_20487;0.7929;4Plan - Fehler beim Öffnen der Applikation;kein Zugriff auf 4Plan
+S4U_20477;S4U_20789;0.7915;Import LoBu NN-Handling läuft auf Fehler;NN-Handling Fehler
+S4U_20487;S4U_22831;0.8195;kein Zugriff auf 4Plan;Anmeldung bei 4Plan nicht möglich
+S4U_20488;S4U_20858;0.8359;Server nicht erreichbar;kein Zugriff auf 4Plan möglich
+S4U_20527;S4U_20769;0.8348;WG: 4Plan - neues Zertifikat;WG: PC23/B24
+S4U_20534;S4U_22831;0.7913;Anmeldung 4plan nicht möglich - Isabel Schneede;Anmeldung bei 4Plan nicht möglich
+S4U_20554;S4U_21097;0.7940;kein Zugriff auf plan - Kerstin Lipka;Zertifikat_Kerstin Lipka
+S4U_20637;S4U_20803;0.7828;Datenart zweimal;Keine Daten Mehrfachplanungsdashboard
+S4U_20651;S4U_23480;0.8044;WG: Fehlermeldung 4PLAN;WG: Fehlermeldung - 4Plan öffnet sich nicht mehr
+S4U_20690;S4U_23226;0.8217;NN-Stelle kann nicht gelöscht werden;NN-Nummern bitte löschen
+S4U_20726;S4U_21211;0.7924;Fehlermeldung in allen 4Plan Anwendungen bei Douglas;WG: 4Plan Ausfall Zertifikat Erneuerung
+S4U_20769;S4U_21264;0.7840;WG: PC23/B24;WG: Neues Zertifikat
+S4U_20803;S4U_21379;0.8278;Keine Daten Mehrfachplanungsdashboard;Keine Werte für 2025
+S4U_20814;S4U_20885;0.7898;Fehlermeldung 4Plan;Fehlermeldung Berichtswesen 4Plan
+S4U_20832;S4U_22421;0.7830;Fehlermeldung nach der Anmeldung bei 4PLAN;Fehlermeldung: 4PLAN Webversion
+S4U_20858;S4U_22702;0.8007;kein Zugriff auf 4Plan möglich;4PLAN nicht erreichbar - Prio Hoch
+S4U_20882;S4U_20889;0.7831;WG: 4PLAN I Support I keine Daten einsehbar;WG: 4PLAN I Support I keine Daten einsehbar
+S4U_20903;S4U_20908;0.7862;WG: Jährliche Briefe erstellen;AW: Jährliche Briefe erstellen
+S4U_20905;S4U_20906;0.8263;WG: Fehlermeldung beim Veröffentlichen in 4Admin;Re: Fehlermeldung beim Veröffentlichen in 4Admin
+S4U_20917;S4U_20918;0.8007;ECE - von 4Plan ausgesperrt;DRINGEND ECE System entsperren
+S4U_21043;S4U_21160;0.7819;System kann keine PG mehr speichern bzw. nicht veröffentlichen;Fehlermeldung beim Veröffentlichen
+S4U_21160;S4U_23149;0.8056;Fehlermeldung beim Veröffentlichen;Admin Veröffentlichen nicht möglich - Notfall!
+S4U_21247;S4U_22606;0.7818;"Neue ""kontinuierliche"" Datenart 2025";Dashboard Jahr 2025 für Planung nicht eingeblendet
+S4U_21379;S4U_22631;0.8203;Keine Werte für 2025;Kein 2025 Szenario in Mehrfachplanung
+S4U_22421;S4U_23075;0.7939;Fehlermeldung: 4PLAN Webversion;Fehlermeldung bei Aufruf 4PLAN
+S4U_22445;S4U_22459;0.8217;WG: 4Plan - erster Praxisimport Juni 2024 in der Cloud hat nicht funktioniert;AW: 4Plan - erster Praxisimport Juni 2024 in der Cloud hat nicht funktioniert
+S4U_22448;S4U_22459;0.7935;WG: 4Plan - erster Praxisimport Juni 2024 in der Cloud hat nicht funktioniert;AW: 4Plan - erster Praxisimport Juni 2024 in der Cloud hat nicht funktioniert
+S4U_22484;S4U_22485;0.7940;Barmenia - ungültige Session;WG: Fehlermeldung 4Admin
+S4U_22560;S4U_22831;0.8095;4Plan ist gesperrt;Anmeldung bei 4Plan nicht möglich
+S4U_22650;S4U_22827;0.7856;Materialisierung läuft nicht seit 17.08;Materialisierung läuft nicht seit 31.10.2024
+S4U_22675;S4U_22676;0.8337;Admin;Neuer Mitarbeiterkreis
+S4U_22702;S4U_22831;0.7932;4PLAN nicht erreichbar - Prio Hoch;Anmeldung bei 4Plan nicht möglich
+S4U_22727;S4U_22917;0.7851;RE: 4PLAN.net;Zugriff auf 4plan
+S4U_22757;S4U_22831;0.8015;kein Zugriff auf 4Plan möglich;Anmeldung bei 4Plan nicht möglich
+S4U_22771;S4U_22831;0.8129;System funktioniert nicht;Anmeldung bei 4Plan nicht möglich
+S4U_22779;S4U_24492;0.7952;WG: Falsche Zugriffe in 4plan;FW: Zugang zu 4Plan
+S4U_23042;S4U_23058;0.8385;Download Excel aus 4Plan;Excel-Download von Berichten funktioniert nicht mehr
+S4U_23438;S4U_23439;0.8069;WG: Mitarbeiterstufungsdaten beim Import meldet Fehler wegen Sicherheitskontext - Prio sehr hoch;AW: Mitarbeiterstufungsdaten beim Import meldet Fehler wegen Sicherheitskontext - Prio sehr hoch
