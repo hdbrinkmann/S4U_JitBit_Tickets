@@ -860,6 +860,50 @@ Options:
 - `--jira-token TOKEN`: Override JIRA_API_TOKEN from environment (for Jira attachments)
 - `--verbose true|false`: Enable detailed logging
 
+New in 2025-08: Image optimization, deduplication, and ETA
+
+Advanced image optimization flags (enabled by default):
+- --image-optimize true|false (default: true): Enable Pillow-based preprocessing before embedding.
+- --image-target-dpi INT (default: 150): Derives a max pixel width from the document’s usable width. Lower for more compression, higher for quality.
+- --image-max-width-px INT: Explicit pixel cap; overrides target-DPI derived width.
+- --image-jpeg-quality INT (default: 75): JPEG quality when re-encoding or converting.
+- --image-convert-png-to-jpeg true|false (default: true): Convert PNGs to JPEG when transparency isn’t needed.
+- --image-force-jpeg true|false (default: false) or -image-force-jpeg true|false: Force JPEG for all non-JPEGs (drops transparency), even if larger.
+- --image-min-recompress-bytes INT (default: 131072): Skip recompressing very small images unless resized or forced.
+- --image-jpeg-optimize true|false (default: false): Extra encoder optimization (slower).
+- --image-jpeg-progressive true|false (default: false): Progressive JPEGs (slower to encode).
+- --image-png-compress-level 0..9 (default: 6): PNG zlib level when retaining PNGs.
+- --image-workers INT (default: 0=auto up to CPU*2): Parallel image optimization workers.
+- Robust handling for palette+transparency PNGs; internal normalization to RGBA and targeted warning suppression.
+
+Per-ticket image deduplication (enabled by default):
+- --image-dedupe true|false (default: true): Suppress duplicates within the same ticket only.
+- --image-dedupe-mode ahash|exact (default: ahash): Perceptual average-hash vs byte-identical.
+- --image-dedupe-threshold INT (default: 5): Hamming distance threshold for ahash mode.
+
+Runtime output improvements:
+- Each generated DOCX line prints elapsed time for the batch and an ETA to completion, e.g.:
+  [OK] DOCX generated: documents/tickets_0001-0050_batch_001.docx (tickets 1-50, 50 tickets) | time: 12.3s | ETA: 0:04:36 (~19:45:02)
+
+Recommended presets:
+- Balanced size + speed:
+  ```
+  python3 tickets_to_docx.py --input Ticket_Data.JSON \
+    --image-workers 8 --image-target-dpi 120 --image-jpeg-quality 70 \
+    --image-min-recompress-bytes 300000
+  ```
+- Maximum compression (may be slower):
+  ```
+  python3 tickets_to_docx.py --input Ticket_Data.JSON \
+    --image-target-dpi 110 --image-jpeg-quality 65 \
+    --image-jpeg-optimize true --image-jpeg-progressive true
+  ```
+- Force JPEG for all non-JPEG inputs (drops transparency):
+  ```
+  python3 tickets_to_docx.py --input Ticket_Data.JSON \
+    --image-force-jpeg true --image-jpeg-quality 70
+  ```
+
 File naming:
 - **Multiple tickets per file**: `tickets_0001-0050_batch_001.docx`, `tickets_0051-0100_batch_002.docx`, etc.
 - **Single ticket per file** (--tickets-per-file 1): `ticket_{id}_{safe_subject}.docx`

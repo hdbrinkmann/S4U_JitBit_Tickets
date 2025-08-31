@@ -64,6 +64,14 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 # Lightweight helpers and fetcher (decoupled from ReportLab deps)
 import requests
 from urllib.parse import urljoin, urlparse, parse_qs
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import warnings
+import math
+import time
+from datetime import datetime, timedelta
+warnings.filterwarnings("ignore", message="Palette images with Transparency", category=UserWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="PIL.Image")
 
 def xml_safe(s: Optional[str]) -> str:
     """
@@ -284,9 +292,6 @@ class AttachmentFetcher:
             r = session.get(url, timeout=self.timeout, allow_redirects=True)
             r.raise_for_status()
 
-            # Validate as image
-            with PILImage.open(io.BytesIO(r.content)) as _:
-                pass
             return r.content
         except Exception as e:
             self._warn(f"[WARN] Jira image fetch failed for {url}: {e}")
@@ -297,9 +302,6 @@ class AttachmentFetcher:
             self._warn(f"[INFO] GET (external) {url}")
             r = self.session.get(url, timeout=self.timeout)
             r.raise_for_status()
-            # Validate image
-            with PILImage.open(io.BytesIO(r.content)) as _:
-                pass
             return r.content
         except Exception as e:
             self._warn(f"[WARN] External image fetch failed for {url}: {e}")
@@ -310,6 +312,7 @@ class AttachmentFetcher:
 
 A4_INCH = (8.27, 11.69)
 LETTER_INCH = (8.5, 11.0)
+EMU_PER_INCH = 914400
 
 
 def set_page_size_and_margins(doc: Document, page: str, margin_pt: float) -> None:
@@ -454,6 +457,9 @@ def _bytes_to_image_dims_emu(img_bytes: bytes) -> Optional[Tuple[int, int]]:
     """
     try:
         with PILImage.open(io.BytesIO(img_bytes)) as im:
+            # Normalize palette+transparency PNGs to RGBA to avoid PIL warning
+            if (im.format or "").upper() == "PNG" and im.mode == "P" and (im.info.get("transparency", None) is not None):
+                im = im.convert("RGBA")
             w_px, h_px = im.width, im.height
             dpi = im.info.get("dpi", (96, 96))
             dpi_x = float(dpi[0] or 96.0)
@@ -464,6 +470,126 @@ def _bytes_to_image_dims_emu(img_bytes: bytes) -> Optional[Tuple[int, int]]:
     except Exception:
         return None
 
+
+def optimize_image_bytes(
+    data: bytes,
+    max_width_px: Optional[int],
+    jpeg_quality: int = 75,
+    convert_png_to_jpeg: bool = True,
+    keep_png_if_transparent: bool = True,
+    force_jpeg: bool = False,
+    force_recompress_min_bytes: int = 128 * 1024,
+    jpeg_optimize: bool = False,
+    jpeg_progressive: bool = False,
+    png_compress_level: int = 6,
+) -> bytes:
+    """
+    Downscale and recompress image bytes to reduce DOCX size.
+    - Optionally convert PNG to JPEG when transparency is not required.
+    - Strip metadata by re-saving.
+    - Keep original bytes if optimization does not reduce size.
+    Fast-paths are included to avoid unnecessary work on small images.
+    """
+    try:
+        with PILImage.open(io.BytesIO(data)) as im:
+            fmt = (im.format or "").upper()
+            # Normalize palette transparency to RGBA to avoid PIL warning and preserve alpha
+            if fmt == "PNG" and im.mode == "P" and (im.info.get("transparency", None) is not None):
+                im = im.convert("RGBA")
+            has_alpha = (im.mode in ("RGBA", "LA")) or ("transparency" in im.info)
+
+            # Fast path: skip tiny PNGs if not exceeding width and below recompress threshold
+            w_px, h_px = im.width, im.height
+            if (not force_jpeg) and fmt == "PNG" and (not max_width_px or w_px <= max_width_px) and len(data) < force_recompress_min_bytes:
+                return data
+
+            # Resize if larger than allowed (use thumbnail for speed and low memory)
+            target_w = max_width_px or w_px
+            if target_w and w_px > target_w:
+                im = im.copy()
+                target_h = max(1, int(h_px * (target_w / float(w_px))))
+                im.thumbnail((target_w, target_h), PILImage.LANCZOS)
+                w_px, h_px = im.width, im.height
+
+            out = io.BytesIO()
+            optimized: bytes
+
+            if fmt == "PNG" and convert_png_to_jpeg and not (keep_png_if_transparent and has_alpha):
+                im2 = im.convert("RGB")
+                im2.save(
+                    out,
+                    format="JPEG",
+                    quality=jpeg_quality,
+                    optimize=jpeg_optimize,
+                    progressive=jpeg_progressive,
+                    subsampling=2,
+                )
+                optimized = out.getvalue()
+            elif fmt in ("JPEG", "JPG"):
+                # Recompress only if reasonably large or resized
+                if len(data) >= force_recompress_min_bytes or (max_width_px and w_px > max_width_px):
+                    im2 = im.convert("RGB")
+                    im2.save(
+                        out,
+                        format="JPEG",
+                        quality=jpeg_quality,
+                        optimize=jpeg_optimize,
+                        progressive=jpeg_progressive,
+                        subsampling=2,
+                    )
+                    optimized = out.getvalue()
+                else:
+                    return data
+            else:
+                # Other formats (e.g., GIF, BMP, WEBP). If forcing JPEG, convert; else re-encode as PNG and keep only if smaller.
+                if force_jpeg:
+                    im2 = im.convert("RGB")
+                    im2.save(
+                        out,
+                        format="JPEG",
+                        quality=jpeg_quality,
+                        optimize=jpeg_optimize,
+                        progressive=jpeg_progressive,
+                        subsampling=2,
+                    )
+                else:
+                    im.save(out, format="PNG", optimize=False, compress_level=int(max(0, min(9, png_compress_level))))
+                optimized = out.getvalue()
+
+            # Only keep optimized if it actually reduces size, unless forcing JPEG conversion
+            return optimized if (force_jpeg or len(optimized) < len(data)) else data
+    except Exception:
+        return data
+
+
+def average_hash(data: bytes, hash_size: int = 8) -> Optional[int]:
+    try:
+        with PILImage.open(io.BytesIO(data)) as im:
+            # Normalize palette+transparency PNGs to RGBA before grayscale convert
+            if (im.format or "").upper() == "PNG" and im.mode == "P" and (im.info.get("transparency", None) is not None):
+                im = im.convert("RGBA")
+            im = im.convert("L")
+            im = im.resize((hash_size, hash_size), PILImage.BILINEAR)
+            pixels = list(im.getdata())
+            avg = sum(pixels) / len(pixels)
+            bits = 0
+            for i, p in enumerate(pixels):
+                if p >= avg:
+                    bits |= (1 << i)
+            return bits
+    except Exception:
+        return None
+
+def hamming_distance(a: int, b: int) -> int:
+    try:
+        return (a ^ b).bit_count()
+    except Exception:
+        x = a ^ b
+        count = 0
+        while x:
+            x &= x - 1
+            count += 1
+        return count
 
 def add_image_placeholder_docx(doc: Document, url: str, auth_hint: bool = False, label: Optional[str] = None):
     safe_url = xml_safe(str(url or "").strip())
@@ -482,9 +608,35 @@ def add_ticket_images_docx(
     max_width_emu: int,
     max_height_emu: int,
     add_placeholders: bool,
+    image_optimize: bool,
+    image_target_dpi: int,
+    image_max_width_px: Optional[int],
+    image_jpeg_quality: int,
+    image_convert_png_to_jpeg: bool,
+    image_force_jpeg: bool,
+    image_min_recompress_bytes: int,
+    image_jpeg_optimize: bool,
+    image_jpeg_progressive: bool,
+    image_png_compress_level: int,
+    image_workers: int,
+    image_cache: Optional[dict] = None,
+    image_dedupe: bool = True,
+    image_dedupe_mode: str = "ahash",
+    image_dedupe_threshold: int = 5,
 ) -> None:
     if not image_urls:
         return
+
+    # Per-ticket deduplication state
+    seen_exact: set[str] = set()
+    seen_ahash: List[int] = []
+
+    # Use a cache to avoid re-fetching/re-optimizing the same URL multiple times within the batch
+    cache = image_cache if image_cache is not None else {}
+
+    # Resolve and fetch sequentially (reuse HTTP sessions safely)
+    ordered: List[Tuple[str, bool]] = []  # (abs_url, auth_hint)
+    fetched: dict[str, Optional[bytes]] = {}
 
     for raw in image_urls:
         if not raw:
@@ -494,29 +646,119 @@ def add_ticket_images_docx(
             continue
         abs_url = resolve_url(clean, kb_base_url) or clean
 
-        data = None
+        # Track original order and auth hint for placeholders
         auth_hint = False
-        
+
+        # If we already have cached result, just record order
+        if abs_url in cache:
+            ordered.append((abs_url, auth_hint))
+            continue
+
+        data = None
+
         # Check URL type and prioritize accordingly
         if abs_url.startswith(("http://", "https://")) and is_jira_attachment_url(abs_url):
-            # This is a Jira attachment URL - try Jira method first
             data = fetcher.fetch_jira_attachment(abs_url)
             auth_hint = True
         else:
-            # Check if this is a JitBit URL with FileID
             fid = extract_file_id_from_url(abs_url)
             if fid:
                 data = fetcher.fetch_attachment_by_id(fid)
                 auth_hint = True
-            
-            # If not a JitBit attachment or JitBit fetch failed, try generic HTTP
             if not data and abs_url.startswith(("http://", "https://")):
                 data = fetcher.fetch_generic_image(abs_url)
 
+        fetched[abs_url] = data if data else None
+        ordered.append((abs_url, auth_hint))
+
+    # Compute effective max width in pixels based on doc width and target DPI
+    effective_max_width_px = image_max_width_px
+    if not effective_max_width_px and image_target_dpi and image_target_dpi > 0:
+        effective_max_width_px = int((max_width_emu / EMU_PER_INCH) * image_target_dpi)
+
+    # Optimize in parallel (CPU-bound) to speed up heavy recompression
+    to_optimize: List[Tuple[str, bytes]] = []
+    for url, data in fetched.items():
+        if url in cache:
+            continue
+        if data:
+            if image_optimize:
+                to_optimize.append((url, data))
+            else:
+                cache[url] = data
+        else:
+            cache[url] = b""  # mark as failed
+
+    if to_optimize:
+        workers = max(1, int(image_workers or 1))
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                future_map = {
+                    ex.submit(
+                        optimize_image_bytes,
+                        data,
+                        max_width_px=effective_max_width_px,
+                        jpeg_quality=image_jpeg_quality,
+                        convert_png_to_jpeg=image_convert_png_to_jpeg,
+                        keep_png_if_transparent=not image_force_jpeg,
+                        force_jpeg=image_force_jpeg,
+                        force_recompress_min_bytes=image_min_recompress_bytes,
+                        jpeg_optimize=image_jpeg_optimize,
+                        jpeg_progressive=image_jpeg_progressive,
+                        png_compress_level=image_png_compress_level,
+                    ): url
+                    for (url, data) in to_optimize
+                }
+                for fut in as_completed(future_map):
+                    url = future_map[fut]
+                    try:
+                        cache[url] = fut.result() or b""
+                    except Exception:
+                        cache[url] = b""
+        else:
+            # Sequential fallback
+            for url, data in to_optimize:
+                try:
+                    cache[url] = optimize_image_bytes(
+                        data,
+                        max_width_px=effective_max_width_px,
+                        jpeg_quality=image_jpeg_quality,
+                        convert_png_to_jpeg=image_convert_png_to_jpeg,
+                        keep_png_if_transparent=not image_force_jpeg,
+                        force_jpeg=image_force_jpeg,
+                        force_recompress_min_bytes=image_min_recompress_bytes,
+                        jpeg_optimize=image_jpeg_optimize,
+                        jpeg_progressive=image_jpeg_progressive,
+                        png_compress_level=image_png_compress_level,
+                    ) or b""
+                except Exception:
+                    cache[url] = b""
+
+    # Finally, embed in the original order
+    for abs_url, auth_hint in ordered:
+        data = cache.get(abs_url, b"")
         if not data:
             if add_placeholders:
                 add_image_placeholder_docx(doc, abs_url, auth_hint=auth_hint)
             continue
+
+        # Per-ticket duplicate suppression
+        if image_dedupe:
+            if image_dedupe_mode == "exact":
+                try:
+                    h = hashlib.blake2b(data, digest_size=16).hexdigest()
+                except Exception:
+                    h = None
+                if h:
+                    if h in seen_exact:
+                        continue
+                    seen_exact.add(h)
+            else:
+                ah = average_hash(data, 8)
+                if ah is not None:
+                    if any(hamming_distance(ah, prev) <= image_dedupe_threshold for prev in seen_ahash):
+                        continue
+                    seen_ahash.append(ah)
 
         dims = _bytes_to_image_dims_emu(data)
         if not dims:
@@ -532,7 +774,6 @@ def add_ticket_images_docx(
 
         scale = min(max_width_emu / w_emu, max_height_emu / h_emu, 1.0)
         target_w = int(w_emu * scale)
-        # python-docx scales height proportionally when width is provided
         bio = io.BytesIO(data)
         try:
             doc.add_picture(bio, width=Emu(target_w))
@@ -551,8 +792,23 @@ def build_doc_for_tickets(
     fetcher: AttachmentFetcher,
     include_images: bool,
     add_placeholders: bool,
+    image_optimize: bool,
+    image_target_dpi: int,
+    image_max_width_px: Optional[int],
+    image_jpeg_quality: int,
+    image_convert_png_to_jpeg: bool,
+    image_force_jpeg: bool,
+    image_min_recompress_bytes: int,
+    image_jpeg_optimize: bool,
+    image_jpeg_progressive: bool,
+    image_png_compress_level: int,
+    image_workers: int,
+    image_dedupe: bool,
+    image_dedupe_mode: str,
+    image_dedupe_threshold: int,
 ) -> None:
     usable_w_emu, usable_h_emu = get_usable_emu(doc)
+    image_cache: dict = {}
 
     for t in tickets_subset:
         subject = (t.get("subject") or "").strip() or "(No subject)"
@@ -592,6 +848,21 @@ def build_doc_for_tickets(
                 max_width_emu=usable_w_emu,
                 max_height_emu=usable_h_emu,
                 add_placeholders=add_placeholders,
+                image_optimize=image_optimize,
+                image_target_dpi=image_target_dpi,
+                image_max_width_px=image_max_width_px,
+                image_jpeg_quality=image_jpeg_quality,
+                image_convert_png_to_jpeg=image_convert_png_to_jpeg,
+                image_force_jpeg=image_force_jpeg,
+                image_min_recompress_bytes=image_min_recompress_bytes,
+                image_jpeg_optimize=image_jpeg_optimize,
+                image_jpeg_progressive=image_jpeg_progressive,
+                image_png_compress_level=image_png_compress_level,
+                image_workers=image_workers,
+                image_cache=image_cache,
+                image_dedupe=image_dedupe,
+                image_dedupe_mode=image_dedupe_mode,
+                image_dedupe_threshold=image_dedupe_threshold,
             )
 
         # Solution section
@@ -617,7 +888,30 @@ def main():
     parser.add_argument("--base-url", default=None, help="Base URL to resolve relative links and derive API root (overrides JITBIT_BASE_URL)")
     parser.add_argument("--token", default=None, help="Bearer token for Jitbit API (overrides JITBIT_API_TOKEN)")
     parser.add_argument("--jira-token", default=None, help="Bearer token for Jira API (overrides JIRA_API_TOKEN)")
+    # Image optimization flags
+    parser.add_argument("--image-optimize", type=str2bool, default=True, help="Optimize and compress images before embedding (default: true)")
+    parser.add_argument("--image-target-dpi", type=int, default=150, help="Target DPI used to derive max pixel width from document width (default: 150)")
+    parser.add_argument("--image-max-width-px", type=int, default=None, help="Explicit max image width in pixels; overrides target-DPI derived width when set")
+    parser.add_argument("--image-jpeg-quality", type=int, default=75, help="JPEG quality for recompression (default: 75)")
+    parser.add_argument("--image-convert-png-to-jpeg", type=str2bool, default=True, help="Convert PNG to JPEG when transparency is not required (default: true)")
+    parser.add_argument("--image-force-jpeg", "-image-force-jpeg", type=str2bool, default=False, help="Force JPEG conversion even if image has transparency (default: false)")
+    parser.add_argument("--image-min-recompress-bytes", type=int, default=131072, help="Only recompress JPEG/PNG if original size is at least this many bytes (default: 131072)")
+    parser.add_argument("--image-jpeg-optimize", type=str2bool, default=False, help="Enable extra JPEG encoder optimization (slower). Default: false")
+    parser.add_argument("--image-jpeg-progressive", type=str2bool, default=False, help="Encode progressive JPEGs (slower to encode). Default: false")
+    parser.add_argument("--image-png-compress-level", type=int, default=6, help="PNG zlib compression level 0-9 (higher = smaller but slower). Default: 6")
+    parser.add_argument("--image-workers", type=int, default=0, help="Parallel workers for image optimization (0=auto)")
+    parser.add_argument("--image-dedupe", type=str2bool, default=True, help="Deduplicate similar images within a ticket (default: true)")
+    parser.add_argument("--image-dedupe-mode", choices=["exact", "ahash"], default="ahash", help="Deduplication mode: exact byte hash or perceptual average-hash")
+    parser.add_argument("--image-dedupe-threshold", type=int, default=5, help="Hamming distance threshold for ahash mode (default: 5)")
     args = parser.parse_args()
+
+    # Compute default workers if needed
+    if args.image_workers is None or args.image_workers <= 0:
+        try:
+            cpu = os.cpu_count() or 4
+        except Exception:
+            cpu = 4
+        args.image_workers = min(32, cpu * 2)
 
     # Load JSON (top-level array)
     with open(args.input, "r", encoding="utf-8") as f:
@@ -665,12 +959,16 @@ def main():
         print("[INFO] No tickets found in input file.")
         return
 
+    total_batches = math.ceil(total_tickets / args.tickets_per_file)
+    t0 = time.time()
+
     batch_count = 0
     generated_files = 0
 
     for i in range(0, total_tickets, args.tickets_per_file):
         batch_count += 1
         ticket_batch = tickets[i:i + args.tickets_per_file]
+        batch_start = time.time()
         
         # Create filename for this batch
         start_idx = i + 1
@@ -701,11 +999,42 @@ def main():
             fetcher=fetcher,
             include_images=args.include_images,
             add_placeholders=args.image_placeholder,
+            image_optimize=args.image_optimize,
+            image_target_dpi=args.image_target_dpi,
+            image_max_width_px=args.image_max_width_px,
+            image_jpeg_quality=args.image_jpeg_quality,
+            image_convert_png_to_jpeg=args.image_convert_png_to_jpeg,
+            image_force_jpeg=args.image_force_jpeg,
+            image_min_recompress_bytes=args.image_min_recompress_bytes,
+            image_jpeg_optimize=args.image_jpeg_optimize,
+            image_jpeg_progressive=args.image_jpeg_progressive,
+            image_png_compress_level=args.image_png_compress_level,
+            image_workers=args.image_workers,
+            image_dedupe=args.image_dedupe,
+            image_dedupe_mode=args.image_dedupe_mode,
+            image_dedupe_threshold=args.image_dedupe_threshold,
         )
         
         doc.save(out_file)
         generated_files += 1
-        print(f"[OK] DOCX generated: {out_file} (tickets {start_idx}-{end_idx}, {len(ticket_batch)} tickets)")
+
+        batch_elapsed = time.time() - batch_start
+        elapsed_total = time.time() - t0
+        batches_done = generated_files
+        remaining = max(0, total_batches - batches_done)
+        if batches_done > 0 and remaining > 0:
+            avg = elapsed_total / batches_done
+            eta_seconds = int(avg * remaining)
+            eta_h = eta_seconds // 3600
+            eta_m = (eta_seconds % 3600) // 60
+            eta_s = eta_seconds % 60
+            eta_hms = f"{eta_h:d}:{eta_m:02d}:{eta_s:02d}"
+            eta_clock = datetime.now() + timedelta(seconds=eta_seconds)
+            extra = f" | time: {batch_elapsed:.1f}s | ETA: {eta_hms} (~{eta_clock.strftime('%H:%M:%S')})"
+        else:
+            extra = f" | time: {batch_elapsed:.1f}s"
+
+        print(f"[OK] DOCX generated: {out_file} (tickets {start_idx}-{end_idx}, {len(ticket_batch)} tickets){extra}")
 
     if args.tickets_per_file == 1:
         print(f"[INFO] Generated {generated_files} separate DOCX files in {args.output_dir}/")
