@@ -4,13 +4,14 @@ This repository contains Python programs that work together to extract Jitbit an
 
 The process is as follows:
 
-1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py"
+1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py", also download the JitBit Knowledge Base with "kb_export_json.py"
 2) Download Jira (TP,TM) ticket data and store them into Jira_relevant_tickets.json with "jira_relevant_tickets.py"
 3) Process this raw data with "process_tickets_with_llm.py" into separate result files for JitBit and Jira
-4) Opttionally (recommeneded) De-Duplicate the files from step 3 with "/scripts/dedupte_tickets.py", create separate output files for each source (JitBit, Jira)
+4) Opttionally (recommeneded) De-Duplicate the files from step 3 with "/scripts/dedupe_tickets.py", create separate output files for each source (JitBit, Jira)
 5) Run "tickets_to_docx" to generate DOCX files with results for both (deduped) result-JSONs
-6) Use the DOCX files in TG Buddy within knowledge fields
-7) Copy the (deduped) JSON results into the TG Buddy docker container root directory
+6) Generate DOCX for JitBit Knowledge Base Data with "kb_to_docx.py"
+7) Use the DOCX files in TG Buddy within knowledge fields, update the vector-database in TG Buddy
+8) Copy the (deduped) JSON results into the TG Buddy docker container root directory
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
@@ -823,13 +824,15 @@ Purpose:
     - "Problem" and "Lösung" sections
     - Optional inline images from image_urls with multi-source support (JitBit, Jira, and external URLs)
 
-**New: Multi-Source Image Support**
+**Multi-Source Image Support**
 - **JitBit Images**: API-first fetching with Bearer token authentication for protected attachments
-- **Jira Images**: Direct download from Jira attachment URLs (e.g., `https://timeplan.atlassian.net/rest/api/3/attachment/content/297228`)
+- **Jira Images**: Basic authentication with email + API token for Jira Cloud attachment URLs
 - **External Images**: Standard HTTP fetch for generic image URLs
 
 Dependencies:
-- Added: python-docx (already listed in requirements.txt)
+```bash
+pip3 install -U python-docx beautifulsoup4 requests pillow python-dotenv
+```
 
 Basic usage:
 ```bash
@@ -868,18 +871,21 @@ Authentication for protected images:
 - The script resolves relative URLs and fetches attachments via `/helpdesk/api/attachment?id=...` (falls back to `/api/attachment?id=...`).
 
 **Jira Images:**
-- Set `JIRA_API_TOKEN` in .env for Jira attachment authentication.
+- Set `JIRA_API_TOKEN` and `JIRA_EMAIL` in .env for Jira Cloud Basic authentication.
 - Jira URLs are detected automatically (e.g., `https://{instance}.atlassian.net/rest/api/3/attachment/content/{id}`).
-- Direct download without API endpoint translation.
+- Uses Basic auth with email + token combination (preferred for Jira Cloud).
 
 **Image Processing Logic:**
-1. **Jira URLs** (priority): `https://{instance}.atlassian.net/rest/api/3/attachment/content/{id}` → Direct Jira download
-2. **JitBit URLs**: `/helpdesk/File/Get/{id}` or similar → JitBit API fetching with Bearer token
+1. **Jira URLs** (priority): Automatically detected by `.atlassian.net` domain → Jira Basic auth download
+2. **JitBit URLs**: `/helpdesk/File/Get/{id}` pattern → JitBit API fetching with Bearer token
 3. **External URLs**: `https://example.com/image.png` → Standard HTTP fetch
 
-Formatting notes:
-- Supports simple inline bold using **bold** or <b>bold</b> in Problem/Solution text.
-- Simple lists are supported when lines start with -, *, • or 1., 2).
+Features:
+- **XML-Safe Content**: Automatically removes XML control characters that cause python-docx failures
+- **Bold Text Support**: Renders **bold** and `<b>bold</b>` markup in Problem/Solution text
+- **List Support**: Simple lists when lines start with -, *, • or 1., 2)
+- **Image Validation**: PIL-based validation ensures only valid images are embedded
+- **Fallback Placeholders**: Text placeholders for failed image downloads with authentication hints
 
 Examples:
 ```bash
@@ -899,7 +905,7 @@ python3 tickets_to_docx.py \
   --tickets-per-file 25 \
   --include-images true \
   --verbose true
-  # Uses JITBIT_API_TOKEN and JIRA_API_TOKEN from .env
+  # Uses JITBIT_API_TOKEN and JIRA_API_TOKEN + JIRA_EMAIL from .env
 
 # Override tokens via command line
 python3 tickets_to_docx.py \
@@ -907,7 +913,21 @@ python3 tickets_to_docx.py \
   --token your_jitbit_token \
   --jira-token your_jira_token \
   --verbose true
+
+# Process deduped tickets with custom batch size
+python3 tickets_to_docx.py \
+  --input tickets_dedup.json \
+  --tickets-per-file 30 \
+  --output-dir documents/canonical/ \
+  --verbose true
 ```
+
+Notes:
+- The script automatically derives JitBit API endpoints from JITBIT_BASE_URL, trying both `/helpdesk/api` and `/api` variants
+- Jira attachment URLs are identified by `.atlassian.net` domain and handled with Basic authentication
+- Image dimensions are preserved using embedded DPI metadata when available (defaults to 96 DPI)
+- Failed image downloads show detailed error messages with authentication hints when `--verbose` is enabled
+- The script handles both raw ticket arrays and objects with `tickets` keys for input flexibility
 
 ------------------------------------------------------------
 ## 5) Render Jitbit Knowledgebase JSON to a single DOCX (kb_to_docx.py)
