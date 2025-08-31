@@ -11,8 +11,8 @@ Outputs:
 
 Usage:
   python3 scripts/dedupe_tickets.py \
-    --input Ticket_Data_TEST.JSON \
-    --out tickets_dedup.json \
+    --input Ticket_Data_Jira.JSON \
+    --out tickets_dedup_Jira.json \
     --groups-out duplicate_groups.json \
     --review-out needs_review.csv \
     --threshold 0.84 \

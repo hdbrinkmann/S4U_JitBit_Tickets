@@ -320,6 +320,8 @@ SYSTEM_PROMPT = """You analyze IT support tickets. Decide if the ticket addresse
 
 Produce a concise complete but relevant extract of the raw data that enables deriving the solution steps; remove disclaimers, addresses, signatures, and unrelated content like disclaimers, etc. 
 
+Do not include any personal data, email addresses, or names in the output. 
+
 Also remove any company names mentioned in the ticket. Use Markdown within the fields where asked. To not remove important context, keep any mentions of product or service names, error codes, or technical terms. Do not try to translate abbreviations or product names, just keep them as-is. For example, do not try to expand "AD" to "Active Directory" if the ticket uses "AD" or expand "NN" to something you may think it is. Just use "NN" in the extract. 
 
 Strictly output a single JSON object only (no code fences, no prose). Exact keys and schema:
@@ -343,10 +345,10 @@ IMPORTANT DATA PROTECTION INSTRUCTIONS: Do not include any personal data, email 
 USER_SUFFIX_INSTRUCTION = """Output only a single JSON object with the exact keys: ticket_id, date, problem, solution. Do not include any URLs."""
 
 
-def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
+def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str], List[str]]:
     """
-    Build stitched prompt text for a ticket and collect all attachment URLs.
-    Returns (user_prompt, attachment_urls).
+    Build stitched prompt text for a ticket and collect all attachment URLs with filenames.
+    Returns (user_prompt, attachment_urls, attachment_filenames).
     """
     tid = ticket.get("ticket_id", "")
     subject = ticket.get("Subject", "")
@@ -372,6 +374,7 @@ def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
     lines.append("Kommentare:")
 
     attachment_urls: List[str] = []
+    attachment_filenames: List[str] = []
 
     # Comments
     comments = ticket.get("kommentare") or []
@@ -393,6 +396,7 @@ def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
                         sz = att.get("Size")
                         if url:
                             attachment_urls.append(url)
+                            attachment_filenames.append(fn)
                         if fn and url:
                             att_line_parts.append(f"{fn} ({url})")
                         elif fn:
@@ -416,6 +420,7 @@ def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
                 url = (att.get("Url") or "").strip()
                 if url:
                     attachment_urls.append(url)
+                    attachment_filenames.append(fn)
                 if fn and url:
                     lines.append(f"- {fn} ({url})")
                 elif fn:
@@ -428,7 +433,7 @@ def build_user_prompt_and_urls(ticket: Dict[str, Any]) -> Tuple[str, List[str]]:
     lines.append("")
     lines.append(USER_SUFFIX_INSTRUCTION)
 
-    return "\n".join(lines), attachment_urls
+    return "\n".join(lines), attachment_urls, attachment_filenames
 
 
 # ---------------------------
@@ -529,33 +534,58 @@ URL_RE = re.compile(r"https?://[^\s\]\)\"'<>]+", re.IGNORECASE)
 # Image URL helpers
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
 
-def _looks_like_image_url(u: str) -> bool:
+def _looks_like_image_url(u: str, filename: str = "") -> bool:
     try:
         if not isinstance(u, str):
             return False
         lu = u.lower()
+        
+        # Check filename first if provided
+        if filename:
+            fn_lower = filename.lower()
+            # If filename has image extension -> it's an image
+            if any(fn_lower.endswith(ext) for ext in IMAGE_EXTS):
+                return True
+            # If filename has non-image extension -> it's not an image
+            if any(fn_lower.endswith(ext) for ext in [".pdf", ".doc", ".docx", ".txt", ".xlsx", ".xls", ".zip", ".rar"]):
+                return False
+        
         # Quick heuristic: path or query contains an image extension
         if any(ext in lu for ext in IMAGE_EXTS):
             return True
-        # Jitbit often serves files via extensionless endpoints like /helpdesk/File/Get/{id}
-        # Treat those as images for downstream use (consumers can further filter if needed).
+            
+        # URL pattern-based detection (only when filename is not decisive)
         from urllib.parse import urlparse
         p = urlparse(lu)
         path = (p.path or "")
+        
+        # Jitbit often serves files via extensionless endpoints like /helpdesk/File/Get/{id}
+        # Treat those as images for downstream use (consumers can further filter if needed).
         if "/file/get/" in path or "/helpdesk/file/get/" in path:
             return True
+            
+        # JIRA/Atlassian attachment URLs (common pattern) - only if no filename or filename inconclusive
+        if "/rest/api/" in path and "/attachment/content/" in path:
+            # Only return True if we don't have conclusive filename information
+            return not filename or not any(filename.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".txt", ".xlsx", ".xls", ".zip", ".rar"])
+            
         return False
     except Exception:
         return False
 
-def _filter_image_urls(urls: List[str]) -> List[str]:
+def _filter_image_urls(urls: List[str], filenames: List[str] = None) -> List[str]:
     seen: set[str] = set()
     out: List[str] = []
-    for u in urls:
-        if isinstance(u, str) and u.startswith(("http://", "https://")) and _looks_like_image_url(u):
-            if u not in seen:
-                seen.add(u)
-                out.append(u)
+    if filenames is None:
+        filenames = [""] * len(urls)
+    
+    for i, u in enumerate(urls):
+        if isinstance(u, str) and u.startswith(("http://", "https://")):
+            filename = filenames[i] if i < len(filenames) else ""
+            if _looks_like_image_url(u, filename):
+                if u not in seen:
+                    seen.add(u)
+                    out.append(u)
     return out
 
 def strip_code_fences(text: str) -> str:
@@ -846,6 +876,7 @@ def normalize_summary(
     llm_obj: Dict[str, Any],
     ticket: Dict[str, Any],
     attachment_urls: List[str],
+    attachment_filenames: List[str] = None,
 ) -> Dict[str, Any]:
     """
     Ensure required keys with safe defaults; coerce types; and attach all URLs found in attachments.
@@ -886,19 +917,30 @@ def normalize_summary(
 
     # Build attachment URLs list (http/https only), preserve order, deduplicate
     urls: List[str] = []
-    for u in attachment_urls:
+    filenames: List[str] = []
+    if attachment_filenames is None:
+        attachment_filenames = []
+    
+    for i, u in enumerate(attachment_urls):
         if isinstance(u, str) and u.startswith(("http://", "https://")):
             u = u.strip()
             if u:
                 urls.append(u)
+                # Get corresponding filename or empty string
+                filename = attachment_filenames[i] if i < len(attachment_filenames) else ""
+                filenames.append(filename)
+    
+    # Deduplicate URLs while maintaining filename correspondence
     seen = set()
     urls_dedup: List[str] = []
-    for u in urls:
+    filenames_dedup: List[str] = []
+    for u, fn in zip(urls, filenames):
         if u not in seen:
             seen.add(u)
             urls_dedup.append(u)
+            filenames_dedup.append(fn)
 
-    images_dedup = _filter_image_urls(urls_dedup)
+    images_dedup = _filter_image_urls(urls_dedup, filenames_dedup)
 
     return {
         "ticket_id": out_ticket_id,
@@ -993,6 +1035,33 @@ def atomic_write_json(path: Path, data: Any) -> None:
 
     tmp.replace(path)
 
+
+def save_progress(
+    output_path: Path,
+    not_relevant_path: Path,
+    relevant_list: List[Dict[str, Any]],
+    not_relevant_list: List[Dict[str, Any]],
+    processed_count: int,
+    is_final_save: bool = False
+) -> None:
+    """
+    Save current progress to disk with atomic writes.
+    """
+    try:
+        # Save relevant results
+        atomic_write_json(output_path, relevant_list)
+        
+        # Save not relevant results
+        atomic_write_json(not_relevant_path, {"tickets": not_relevant_list})
+        
+        if not is_final_save:
+            print(f"[checkpoint] Saved progress after {processed_count} processed tickets")
+            print(f"[checkpoint] Current counts: {len(relevant_list)} relevant, {len(not_relevant_list)} not relevant")
+    
+    except Exception as e:
+        print(f"[warn] Failed to save progress: {e}")
+        # Don't raise - allow processing to continue
+
 # ---------------------------
 # Utility: load all tickets (non-streaming, allows sorting)
 # ---------------------------
@@ -1064,6 +1133,7 @@ def process_tickets(
     append: bool,
     only_ticket_id: Optional[int] = None,
     newest_first: bool = False,
+    save_interval: int = 50,
 ) -> None:
     # Determine input iteration strategy
     if newest_first:
@@ -1129,6 +1199,7 @@ def process_tickets(
     print(f"Limit (relevant only): {limit_relevant if limit_relevant is not None else 'none'}")
     print(f"Max calls: {max_calls if max_calls is not None else 'none'}")
     print(f"Start index: {start_index}, Append: {append}")
+    print(f"Save interval: {save_interval if save_interval > 0 else 'disabled (save only at end)'}")
     print("")
 
     for idx, ticket in enumerate(tickets_iter):
@@ -1144,7 +1215,7 @@ def process_tickets(
             print(f"\nReached limit of relevant tickets: {limit_relevant}. Stopping.")
             break
 
-        user_prompt, att_urls = build_user_prompt_and_urls(ticket)
+        user_prompt, att_urls, att_filenames = build_user_prompt_and_urls(ticket)
 
         # Perform LLM call
         total_calls += 1
@@ -1172,18 +1243,21 @@ def process_tickets(
         if is_not_relevant(llm_obj.get("problem")):
             not_relevant_list.append(ticket)
         else:
-            summary = normalize_summary(llm_obj, ticket, att_urls)
+            summary = normalize_summary(llm_obj, ticket, att_urls, att_filenames)
             relevant_list.append(summary)
             newly_relevant += 1
 
-        # Progress log
+        # Progress log and periodic save
         processed_count += 1
         if processed_count % 10 == 0:
             print(f"Processed {processed_count} tickets | Relevant (new): {newly_relevant} | Not relevant (new): {len(not_relevant_list)} | Calls: {total_calls}")
+        
+        # Periodic save
+        if save_interval > 0 and processed_count % save_interval == 0:
+            save_progress(output_path, not_relevant_path, relevant_list, not_relevant_list, processed_count)
 
-    # Write outputs atomically
-    atomic_write_json(output_path, relevant_list)
-    atomic_write_json(not_relevant_path, {"tickets": not_relevant_list})
+    # Final save - mark as final to avoid duplicate checkpoint messages
+    save_progress(output_path, not_relevant_path, relevant_list, not_relevant_list, processed_count, is_final_save=True)
 
     print("\nDone.")
     print(f"Relevant summaries written to: {output_path} (count: {len(relevant_list)})")
@@ -1237,6 +1311,12 @@ def main() -> None:
         action="store_true",
         help="Process tickets in descending ticket_id order (loads the entire input into memory)."
     )
+    parser.add_argument(
+        "--save-interval", 
+        type=int, 
+        default=50, 
+        help="Save progress every N processed tickets (0 to disable periodic saving)."
+    )
     args = parser.parse_args()
 
     # Resolve API base/endpoint from CLI or env fallbacks (prefer CLI)
@@ -1264,6 +1344,7 @@ def main() -> None:
             append=args.append,
             only_ticket_id=getattr(args, "only_ticket_id", None),
             newest_first=getattr(args, "newest_first", False),
+            save_interval=getattr(args, "save_interval", 50),
         )
     except KeyboardInterrupt:
         print("\nAborted by user.")

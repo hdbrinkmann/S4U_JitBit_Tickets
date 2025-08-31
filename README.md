@@ -1,6 +1,16 @@
-# S4U JitBit Tickets — Export and LLM Processing
+# Timegrip JitBit and Jira Tickets — Export and LLM Processing
 
-This repository contains Python programs that work together to extract Jitbit tickets and knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), optionally deduplicate quasi-duplicate tickets using multilingual embeddings, and render them as PDF/DOCX documents.
+This repository contains Python programs that work together to extract Jitbit and Jira tickets and the JitBit knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), optionally deduplicate quasi-duplicate tickets using multilingual embeddings, and render them as PDF/DOCX documents.
+
+The process is as follows:
+
+1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py"
+2) Download Jira (TP,TM) ticket data and store them into Jira_relevant_tickets.json with "jira_relevant_tickets.py"
+3) Process this raw data with "process_tickets_with_llm.py" into separate result files for JitBit and Jira
+4) Opttionally (recommeneded) De-Duplicate the files from step 3 with "/scripts/dedupte_tickets.py", create separate output files for each source (JitBit, Jira)
+5) Run "tickets_to_docx" to generate DOCX files with results for both (deduped) result-JSONs
+6) Use the DOCX files in TG Buddy within knowledge fields
+7) Copy the (deduped) JSON results into the TG Buddy docker container root directory
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
@@ -61,6 +71,10 @@ SCW_REGION=fr-par                                 # optional (not required for t
 # Optional for embeddings (dedupe)
 SCW_API_KEY=your_scaleway_api_key_here           # alias for SCW_SECRET_KEY
 SCW_EMBEDDING_MODEL=bge-multilingual-gemma2      # default if unset
+
+# Optional for Jira image downloads in tickets_to_docx.py
+# Note: Can reuse JIRA_API_TOKEN if it has appropriate permissions
+# JIRA_API_TOKEN=your_jira_api_token             # already defined above
 ```
 
 **Security Note**: Never commit the `.env` file to version control. Ensure `.env` is included in your `.gitignore`.
@@ -807,7 +821,12 @@ Purpose:
     - Subject as heading
     - Meta line with Ticket-ID and date
     - "Problem" and "Lösung" sections
-    - Optional inline images from image_urls (API-first for Jitbit-protected attachments)
+    - Optional inline images from image_urls with multi-source support (JitBit, Jira, and external URLs)
+
+**New: Multi-Source Image Support**
+- **JitBit Images**: API-first fetching with Bearer token authentication for protected attachments
+- **Jira Images**: Direct download from Jira attachment URLs (e.g., `https://timeplan.atlassian.net/rest/api/3/attachment/content/297228`)
+- **External Images**: Standard HTTP fetch for generic image URLs
 
 Dependencies:
 - Added: python-docx (already listed in requirements.txt)
@@ -835,6 +854,7 @@ Options:
 - `--timeout SECONDS`: HTTP timeout for image downloads (default: 15.0)
 - `--base-url URL`: Override JITBIT_BASE_URL from environment
 - `--token TOKEN`: Override JITBIT_API_TOKEN from environment
+- `--jira-token TOKEN`: Override JIRA_API_TOKEN from environment (for Jira attachments)
 - `--verbose true|false`: Enable detailed logging
 
 File naming:
@@ -842,8 +862,20 @@ File naming:
 - **Single ticket per file** (--tickets-per-file 1): `ticket_{id}_{safe_subject}.docx`
 
 Authentication for protected images:
-- Set JITBIT_API_TOKEN in .env and JITBIT_BASE_URL to your instance base (e.g., https://support.example.com/helpdesk).
-- The script resolves relative URLs and fetches attachments via /helpdesk/api/attachment?id=... (falls back to /api/attachment?id=...).
+
+**JitBit Images:**
+- Set `JITBIT_API_TOKEN` in .env and `JITBIT_BASE_URL` to your instance base (e.g., https://support.example.com/helpdesk).
+- The script resolves relative URLs and fetches attachments via `/helpdesk/api/attachment?id=...` (falls back to `/api/attachment?id=...`).
+
+**Jira Images:**
+- Set `JIRA_API_TOKEN` in .env for Jira attachment authentication.
+- Jira URLs are detected automatically (e.g., `https://{instance}.atlassian.net/rest/api/3/attachment/content/{id}`).
+- Direct download without API endpoint translation.
+
+**Image Processing Logic:**
+1. **Jira URLs** (priority): `https://{instance}.atlassian.net/rest/api/3/attachment/content/{id}` → Direct Jira download
+2. **JitBit URLs**: `/helpdesk/File/Get/{id}` or similar → JitBit API fetching with Bearer token
+3. **External URLs**: `https://example.com/image.png` → Standard HTTP fetch
 
 Formatting notes:
 - Supports simple inline bold using **bold** or <b>bold</b> in Problem/Solution text.
@@ -860,12 +892,20 @@ python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 10 --outp
 # Maintain original behavior (one file per ticket)
 python3 tickets_to_docx.py --input Ticket_Data.JSON --tickets-per-file 1
 
-# Custom output directory with authentication
+# Mixed JitBit and Jira tickets with authentication for both sources
 python3 tickets_to_docx.py \
   --input Ticket_Data.JSON \
   --output-dir documents/tickets/ \
   --tickets-per-file 25 \
   --include-images true \
+  --verbose true
+  # Uses JITBIT_API_TOKEN and JIRA_API_TOKEN from .env
+
+# Override tokens via command line
+python3 tickets_to_docx.py \
+  --input Ticket_Data.JSON \
+  --token your_jitbit_token \
+  --jira-token your_jira_token \
   --verbose true
 ```
 

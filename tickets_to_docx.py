@@ -11,15 +11,20 @@ What this script does:
   - "Problem" section
   - "Lösung" section
   - Images listed in image_urls embedded below "Problem" (optional)
-- For Jitbit-protected images, uses API-first fetching with Bearer token:
+- Supports image URLs from multiple sources:
+  * JitBit-protected images: uses API-first fetching with Bearer token:
     GET {base}/helpdesk/api/attachment?id={FileID}
-  falling back to {base}/api/attachment?id=...
-  where {base} is derived from JITBIT_BASE_URL or provided args
+    falling back to {base}/api/attachment?id=...
+    where {base} is derived from JITBIT_BASE_URL or provided args
+  * Jira attachment URLs: directly downloads from URLs like:
+    https://{instance}.atlassian.net/rest/api/3/attachment/content/{id}
+  * Generic external images: standard HTTP(S) fetch
 
 Usage:
-  1) Ensure .env contains:
+  1) Ensure .env contains appropriate tokens:
        JITBIT_API_TOKEN=...     (Bearer token for Jitbit API)
        JITBIT_BASE_URL=https://support.example.com/helpdesk
+       JIRA_API_TOKEN=...       (Bearer token for Jira API, optional)
      Note: Ticket_Data.JSON usually doesn't contain export_info.api_base_url,
            so we rely on JITBIT_BASE_URL to derive the API root.
 
@@ -40,6 +45,7 @@ import json
 import os
 import re
 import sys
+import base64
 from typing import List, Optional, Tuple
 
 try:
@@ -123,6 +129,25 @@ def extract_file_id_from_url(url_str: str) -> Optional[str]:
         pass
     return None
 
+def is_jira_attachment_url(url_str: str) -> bool:
+    """
+    Detects if a URL is a Jira attachment URL.
+    Handles both REST API download URLs and /secure/attachment paths, e.g.:
+      - https://{instance}.atlassian.net/rest/api/3/attachment/{id}/content
+      - https://{instance}.atlassian.net/rest/api/latest/attachment/content/{id}
+      - https://{instance}.atlassian.net/secure/attachment/{id}/{filename}
+      - https://{instance}.atlassian.net/secure/thumbnail/{id}/{filename}
+    """
+    try:
+        pu = urlparse(url_str)
+        host_ok = bool(pu.hostname and ".atlassian.net" in pu.hostname)
+        path = (pu.path or "").lower()
+        api_pattern = ("/rest/api/" in path) and ("/attachment" in path) and ("/content" in path)
+        secure_pattern = ("/secure/attachment/" in path) or ("/secure/thumbnail/" in path)
+        return bool(host_ok and (api_pattern or secure_pattern))
+    except Exception:
+        return False
+
 def derive_api_root(api_base_url: Optional[str], env_base_url: Optional[str], verbose: bool = False) -> Optional[str]:
     """
     Derive the API root:
@@ -150,13 +175,27 @@ def derive_api_root(api_base_url: Optional[str], env_base_url: Optional[str], ve
     except Exception:
         return None
 
-class JitbitFetcher:
-    def __init__(self, api_root: Optional[str], token: Optional[str], timeout: float = 15.0, verbose: bool = False):
+class AttachmentFetcher:
+    def __init__(self, api_root: Optional[str], token: Optional[str], jira_token: Optional[str] = None, jira_email: Optional[str] = None, timeout: float = 15.0, verbose: bool = False):
         self.api_root = api_root
+        # Jitbit API bearer token (if provided)
         self.token = token
+
+        # Jira Cloud auth
+        self.jira_api_token = jira_token
+        self.jira_email = jira_email
+        self.jira_basic_auth_header: Optional[str] = None
+        if self.jira_email and self.jira_api_token:
+            try:
+                b64 = base64.b64encode(f"{self.jira_email}:{self.jira_api_token}".encode("utf-8")).decode("utf-8")
+                self.jira_basic_auth_header = f"Basic {b64}"
+            except Exception:
+                self.jira_basic_auth_header = None
+
         self.timeout = timeout
         self.verbose = verbose
 
+        # Session primarily for Jitbit fetches (Bearer token)
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Tickets-DOCX/1.0",
@@ -218,6 +257,39 @@ class JitbitFetcher:
             return None
         except Exception as e:
             self._warn(f"[WARN] API fetch failed for id={file_id}: {e}")
+            return None
+
+    def fetch_jira_attachment(self, url: str) -> Optional[bytes]:
+        """
+        Fetch a Jira attachment or secure image URL using Jira Cloud authentication.
+        Prefers Basic auth with JIRA_EMAIL + JIRA_API_TOKEN, falls back to Bearer if only token is provided.
+        """
+        try:
+            # Separate session for Jira to isolate auth headers
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Tickets-DOCX/1.0",
+                "Accept": "*/*",
+            })
+
+            # Prefer Basic auth for Jira Cloud
+            if self.jira_basic_auth_header:
+                session.headers["Authorization"] = self.jira_basic_auth_header
+                session.headers["X-Atlassian-Token"] = "no-check"
+            elif self.jira_api_token:
+                # Fallback to Bearer if only token was provided (may not work on Cloud)
+                session.headers["Authorization"] = f"Bearer {self.jira_api_token}"
+
+            self._warn(f"[INFO] GET (Jira) {url}")
+            r = session.get(url, timeout=self.timeout, allow_redirects=True)
+            r.raise_for_status()
+
+            # Validate as image
+            with PILImage.open(io.BytesIO(r.content)) as _:
+                pass
+            return r.content
+        except Exception as e:
+            self._warn(f"[WARN] Jira image fetch failed for {url}: {e}")
             return None
 
     def fetch_generic_image(self, url: str) -> Optional[bytes]:
@@ -325,7 +397,7 @@ def add_plain_text_block(doc: Document, text: str):
     Also supports **bold** inline.
     """
     if not (text and str(text).strip()):
-        doc.add_paragraph("(Kein Inhalt)")
+        doc.add_paragraph("(No content)")
         return
 
     lines = str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -396,9 +468,9 @@ def _bytes_to_image_dims_emu(img_bytes: bytes) -> Optional[Tuple[int, int]]:
 def add_image_placeholder_docx(doc: Document, url: str, auth_hint: bool = False, label: Optional[str] = None):
     safe_url = xml_safe(str(url or "").strip())
     label_text = f"{label} – " if label else ""
-    hint_text = " (evtl. Anmeldung/Cookies erforderlich)" if auth_hint else ""
+    hint_text = " (login/cookies may be required)" if auth_hint else ""
     p = doc.add_paragraph()
-    run = p.add_run(xml_safe(f"{label_text}Bild konnte nicht geladen werden: {safe_url}{hint_text}"))
+    run = p.add_run(xml_safe(f"{label_text}Image could not be loaded: {safe_url}{hint_text}"))
     run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
 
@@ -406,7 +478,7 @@ def add_ticket_images_docx(
     doc: Document,
     image_urls: List[str],
     kb_base_url: Optional[str],
-    fetcher: JitbitFetcher,
+    fetcher: AttachmentFetcher,
     max_width_emu: int,
     max_height_emu: int,
     add_placeholders: bool,
@@ -423,28 +495,39 @@ def add_ticket_images_docx(
         abs_url = resolve_url(clean, kb_base_url) or clean
 
         data = None
-        fid = extract_file_id_from_url(abs_url)
-        if fid:
-            data = fetcher.fetch_attachment_by_id(fid)
-        if not data:
-            if abs_url.startswith("http://") or abs_url.startswith("https://"):
+        auth_hint = False
+        
+        # Check URL type and prioritize accordingly
+        if abs_url.startswith(("http://", "https://")) and is_jira_attachment_url(abs_url):
+            # This is a Jira attachment URL - try Jira method first
+            data = fetcher.fetch_jira_attachment(abs_url)
+            auth_hint = True
+        else:
+            # Check if this is a JitBit URL with FileID
+            fid = extract_file_id_from_url(abs_url)
+            if fid:
+                data = fetcher.fetch_attachment_by_id(fid)
+                auth_hint = True
+            
+            # If not a JitBit attachment or JitBit fetch failed, try generic HTTP
+            if not data and abs_url.startswith(("http://", "https://")):
                 data = fetcher.fetch_generic_image(abs_url)
 
         if not data:
             if add_placeholders:
-                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+                add_image_placeholder_docx(doc, abs_url, auth_hint=auth_hint)
             continue
 
         dims = _bytes_to_image_dims_emu(data)
         if not dims:
             if add_placeholders:
-                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+                add_image_placeholder_docx(doc, abs_url, auth_hint=auth_hint)
             continue
 
         w_emu, h_emu = dims
         if w_emu <= 0 or h_emu <= 0:
             if add_placeholders:
-                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+                add_image_placeholder_docx(doc, abs_url, auth_hint=auth_hint)
             continue
 
         scale = min(max_width_emu / w_emu, max_height_emu / h_emu, 1.0)
@@ -455,7 +538,7 @@ def add_ticket_images_docx(
             doc.add_picture(bio, width=Emu(target_w))
         except Exception:
             if add_placeholders:
-                add_image_placeholder_docx(doc, abs_url, auth_hint=bool(fid))
+                add_image_placeholder_docx(doc, abs_url, auth_hint=auth_hint)
             continue
 
 
@@ -465,14 +548,14 @@ def build_doc_for_tickets(
     doc: Document,
     tickets_subset: List[dict],
     env_base: Optional[str],
-    fetcher: JitbitFetcher,
+    fetcher: AttachmentFetcher,
     include_images: bool,
     add_placeholders: bool,
 ) -> None:
     usable_w_emu, usable_h_emu = get_usable_emu(doc)
 
     for t in tickets_subset:
-        subject = (t.get("subject") or "").strip() or "(Ohne Betreff)"
+        subject = (t.get("subject") or "").strip() or "(No subject)"
         problem = (t.get("problem") or "").rstrip()
         solution = (t.get("solution") or "").rstrip()
         image_urls = t.get("image_urls") or []
@@ -484,7 +567,7 @@ def build_doc_for_tickets(
         # Meta line
         meta_parts = []
         if t.get("ticket_id") is not None:
-            meta_parts.append(f"Ticket-ID: {t['ticket_id']}")
+            meta_parts.append(f"Ticket ID: {t['ticket_id']}")
         if t.get("date"):
             meta_parts.append(str(t["date"]))
         if meta_parts:
@@ -513,7 +596,7 @@ def build_doc_for_tickets(
 
         # Solution section
         doc.add_paragraph()  # small spacer
-        h2 = doc.add_paragraph("Lösung")
+        h2 = doc.add_paragraph("Solution")
         h2.style = "Heading 2"
         add_plain_text_block(doc, solution)
 
@@ -533,6 +616,7 @@ def main():
     parser.add_argument("--verbose", type=str2bool, default=False, help="Enable verbose logging")
     parser.add_argument("--base-url", default=None, help="Base URL to resolve relative links and derive API root (overrides JITBIT_BASE_URL)")
     parser.add_argument("--token", default=None, help="Bearer token for Jitbit API (overrides JITBIT_API_TOKEN)")
+    parser.add_argument("--jira-token", default=None, help="Bearer token for Jira API (overrides JIRA_API_TOKEN)")
     args = parser.parse_args()
 
     # Load JSON (top-level array)
@@ -553,13 +637,19 @@ def main():
     env_base = (args.base_url or os.getenv("JITBIT_BASE_URL", "") or "").strip() or None
     api_root = derive_api_root(None, env_base, verbose=args.verbose)
     token = (args.token or os.getenv("JITBIT_API_TOKEN", "") or "").strip()
+    jira_token = (args.jira_token or os.getenv("JIRA_API_TOKEN", "") or "").strip()
+    jira_email = (os.getenv("JIRA_EMAIL", "") or "").strip()
 
     if not env_base:
         print("[WARN] JITBIT_BASE_URL not set in environment/.env. Relative Jitbit links cannot be resolved.", file=sys.stderr)
     if not token:
         print("[WARN] JITBIT_API_TOKEN not set in environment/.env. Jitbit-protected images will not load.", file=sys.stderr)
+    if not jira_token:
+        print("[WARN] JIRA_API_TOKEN not set in environment/.env. Jira attachment downloads may fail.", file=sys.stderr)
+    if not jira_email:
+        print("[WARN] JIRA_EMAIL not set in environment/.env. Jira Basic auth is not configured; use JIRA_EMAIL + JIRA_API_TOKEN.", file=sys.stderr)
 
-    fetcher = JitbitFetcher(api_root=api_root, token=token, timeout=args.timeout, verbose=args.verbose)
+    fetcher = AttachmentFetcher(api_root=api_root, token=token, jira_token=jira_token, jira_email=jira_email, timeout=args.timeout, verbose=args.verbose)
 
     # Create output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)

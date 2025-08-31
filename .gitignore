@@ -49,6 +49,7 @@ Thumbs.db
 # Logs and Textfiles
 *.log
 *.txt
+*.csv
 
 # JSON - never commit JSON files
 *.[Jj][Ss][Oo][Nn]
