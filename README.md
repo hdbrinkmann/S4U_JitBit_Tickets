@@ -2,6 +2,8 @@
 
 This repository contains Python programs that work together to extract Jitbit and Jira tickets and the JitBit knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), optionally deduplicate quasi-duplicate tickets using multilingual embeddings, and render them as PDF/DOCX documents.
 
+The App runs on the users' local machine. All data is located on this machine. AI inference provider is Scaleway, a French company, from Scaleways' Paris datacenter. All necessary documents (TOS and DPA) are in place, the legal relationship is between S4U and Scaleway. 
+
 The process is as follows:
 
 1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py", also download the JitBit Knowledge Base with "kb_export_json.py"
