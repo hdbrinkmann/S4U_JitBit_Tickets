@@ -1019,6 +1019,186 @@ Notes & troubleshooting:
   - Run with --verbose to inspect fetch attempts and decisions.
 - Duplicate suppression for attachments is per article by normalized URL.
 
+## 6) Generate Q&A from DOCX chapters (scripts/generate_qa_from_docx.py)
+
+Purpose:
+- Convert arbitrary DOCX documents into a Q&A dataset by chapter and optionally export to DOCX.
+- Two-step pipeline with an intermediate JSON corpus for auditability and caching.
+
+Overview:
+- Input directory: QA_SOURCE (place your .docx files here)
+- Intermediate chapters JSON: QA_CHAPTERS/<doc_basename>.json
+- Final Q&A JSON: QA_OUTPUT/<doc_basename>.json
+- DOCX export: QA_DOCX/<doc_basename>.docx
+
+How it works:
+1) extract
+   - Reads all .docx from QA_SOURCE
+   - Splits into chapters by heading level (default Heading 1)
+   - Writes per-document chapters JSON with chapter title, content, char_count, and token_estimate
+   - Skips Word lock files (~$...)
+
+2) qa
+   - Reads chapters JSON from QA_CHAPTERS
+   - For each chapter, computes a target number of Q&A pairs based on size (approx. tokens/350; clamped 1..10)
+   - Calls a Scaleway OpenAI-compatible chat completion model (e.g., gpt-oss-120b)
+   - Writes per-document Q&A JSON to QA_OUTPUT
+
+3) docx
+   - Converts Q&A JSON to a DOCX table
+   - Table columns: Question | Answer (Chapter column removed by request)
+   - Adds a simple heading and optional metadata line (model, generation time)
+
+Dependencies:
+- python-docx, openai, tiktoken, tenacity (for retries)
+Install:
+```bash
+pip3 install -U python-docx openai tiktoken tenacity
+```
+
+Environment:
+- The script auto-loads .env if present. Supported variables:
+```
+# API key (one of these must be set)
+SCW_API_KEY=your_scaleway_key
+SCW_SECRET_KEY=your_scaleway_key        # alias
+
+# Base URL (any of these supported; defaults to https://api.scaleway.ai if unset)
+SCW_BASE_URL=https://api.scaleway.ai
+SCW_OPENAI_BASE_URL=https://api.scaleway.ai/v1/chat/completions  # legacy full path ok; script normalizes
+
+# Model (last path segment is used if you pass provider/model)
+LLM_MODEL=gpt-oss-120b
+# or SCW_MODEL=gpt-oss-120b
+
+# Optional: request native JSON mode if the provider supports it
+SCW_JSON_MODE=1
+```
+
+CLI:
+- Extract chapters:
+```bash
+python3 scripts/generate_qa_from_docx.py extract --input QA_SOURCE --output QA_CHAPTERS --heading-level 1
+```
+- Generate Q&A JSON:
+```bash
+python3 scripts/generate_qa_from_docx.py qa --input QA_CHAPTERS --output QA_OUTPUT --max-per-chapter 10
+```
+- Export DOCX:
+```bash
+python3 scripts/generate_qa_from_docx.py docx --input QA_OUTPUT --output QA_DOCX
+```
+
+Options:
+- --heading-level N
+  - Which heading style to treat as chapter boundary (default 1)
+- --max-per-chapter N
+  - Upper bound of Q&A pairs per chapter for size-based mode (default 10)
+- --max-per-document N
+  - Optional ceiling on total Q&A per document in size-based mode. When set, the tool distributes the total across chapters proportionally to chapter size (largest-remainder method). Logs show requested vs assigned.
+- Coverage-mode (adaptive, coverage-driven; generates “as many as needed” to cover the chapter):
+  - --coverage-mode
+    - Enable concept coverage-driven generation (adapts Q&A count to chapter content)
+  - --coverage-threshold FLOAT (default 0.85)
+    - Target concept coverage ratio (0..1) before stopping (e.g., 0.85 = 85% of extracted concepts covered)
+  - --concepts-max INT (default 50)
+    - Max distinct concepts to extract per chapter as coverage targets (definitions, procedures, options, exceptions, rules)
+  - --max-qa-per-chapter-safety INT (default 60)
+    - Safety cap per chapter to avoid unbounded growth in pathological cases
+  - --max-iterations INT (default 8)
+    - Max coverage iterations per chapter
+- Environment-driven choices:
+  - Base URL priority: SCW_BASE_URL | SCW_OPENAI_BASE_URL | OPENAI_BASE_URL | OPENAI_API_BASE (normalized to /v1)
+  - API key: SCW_API_KEY | SCW_SECRET_KEY | OPENAI_API_KEY
+  - Model: SCW_MODEL | LLM_MODEL | TOGETHER_MODEL (provider/model → model)
+
+Examples:
+- Size-based (per chapter, scales by size up to max):
+```bash
+python3 scripts/generate_qa_from_docx.py qa \
+  --input QA_CHAPTERS \
+  --output QA_OUTPUT \
+  --max-per-chapter 10
+```
+
+- Size-based with per-document cap (distributes total by chapter size):
+```bash
+python3 scripts/generate_qa_from_docx.py qa \
+  --input QA_CHAPTERS \
+  --output QA_OUTPUT \
+  --max-per-chapter 10 \
+  --max-per-document 120
+```
+
+- Coverage-mode (recommended for “cover the whole chapter” behavior):
+```bash
+python3 scripts/generate_qa_from_docx.py qa \
+  --input QA_CHAPTERS \
+  --output QA_OUTPUT \
+  --coverage-mode \
+  --coverage-threshold 0.85 \
+  --concepts-max 50 \
+  --max-qa-per-chapter-safety 60 \
+  --max-iterations 8
+```
+
+Intermediate JSON schema (QA_CHAPTERS/*.json):
+```json
+{
+  "source_file": "MyDoc.docx",
+  "heading_level": 1,
+  "extracted_at": "2025-09-02T19:16:00Z",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "Chapter Title",
+      "content": "Full chapter text ...",
+      "char_count": 1234,
+      "token_estimate": 308
+    }
+  ]
+}
+```
+
+Final Q&A JSON schema (QA_OUTPUT/*.json):
+```json
+{
+  "source_file": "MyDoc.docx",
+  "model": "gpt-oss-120b",
+  "generated_at": "2025-09-02T19:20:00Z",
+  "chapters": [
+    {
+      "chapter_title": "Chapter Title",
+      "question_count": 6,
+      "questions": [
+        { "question": "…", "answer": "…" }
+      ]
+    }
+  ]
+}
+```
+
+DOCX export:
+- Writes QA_DOCX/<doc_basename>.docx
+- Table columns: Question | Answer (no Chapter column)
+
+Progress logging (qa step):
+- Per-document header (document name, number of chapters)
+- Size-based mode:
+  - Per-chapter: index, title, token estimate, target count (with “(doc-cap)” when per-document cap is active)
+  - Skips empty chapters; prints number of Q&A generated
+- Coverage-mode:
+  - Per-chapter: “[coverage-mode]” tag
+  - Iteration lines showing coverage progress, e.g.:
+    [qa][coverage] 'Chapter Name': iter=2 added=6 covered=26/30 (87%)
+  - Final per-chapter Q&A count
+- Per-document totals and output path at the end
+
+Notes:
+- File naming mirrors the DOCX basename (spaces/case preserved), only extension changes to .json/.docx
+- If chapters exceed model context, consider chunking per chapter (not enabled by default)
+- Retries: transient provider errors are retried with exponential backoff
+
 ------------------------------------------------------------
 ## Utility Scripts
 
