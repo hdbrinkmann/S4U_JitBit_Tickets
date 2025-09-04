@@ -1026,6 +1026,7 @@ Notes & troubleshooting:
 Purpose:
 - Convert arbitrary DOCX documents into a Q&A dataset by chapter and optionally export to DOCX.
 - Two-step pipeline with an intermediate JSON corpus for auditability and caching.
+- Supports both size-based and coverage-driven Q&A generation modes.
 
 Overview:
 - Input directory: QA_SOURCE (place your .docx files here)
@@ -1042,7 +1043,8 @@ How it works:
 
 2) qa
    - Reads chapters JSON from QA_CHAPTERS
-   - For each chapter, computes a target number of Q&A pairs based on size (approx. tokens/350; clamped 1..10)
+   - **Size-based mode** (default): Computes a target number of Q&A pairs based on size (approx. tokens/350; clamped 1..10)
+   - **Coverage mode**: Systematically extracts concepts and generates Q&A to achieve comprehensive topic coverage
    - Calls a Scaleway OpenAI-compatible chat completion model (e.g., gpt-oss-120b)
    - Writes per-document Q&A JSON to QA_OUTPUT
 
@@ -1050,6 +1052,63 @@ How it works:
    - Converts Q&A JSON to a DOCX table
    - Table columns: Question | Answer (Chapter column removed by request)
    - Adds a simple heading and optional metadata line (model, generation time)
+
+### Coverage Mode - Advanced Q&A Generation
+
+Coverage mode (`--coverage-mode`) is an intelligent Q&A generation strategy that ensures comprehensive topic coverage by first identifying key concepts in a chapter, then systematically generating questions to address those concepts.
+
+**How Coverage Mode Works:**
+
+1. **Concept Extraction Phase**: 
+   - Extracts key concepts, definitions, procedures, configuration options, and important rules from chapter content
+   - Each concept gets a unique ID (C1, C2, C3...), title, summary, and importance level (1=minor, 2=important, 3=critical)
+   - For large chapters, content is chunked and concepts are extracted from each chunk, then merged and deduplicated
+
+2. **Iterative Q&A Generation**:
+   - Generates Q&A pairs in multiple rounds, tracking which concepts each question covers
+   - Prioritizes high-importance concepts first (3 > 2 > 1)
+   - Continues until coverage threshold is met (default 85% of concepts covered)
+   - Each iteration logs detailed progress: `[qa][coverage] 'Chapter Title': iter=2 added=4 covered=12/20 (60%)`
+
+3. **Adaptive Termination**:
+   - Stops when coverage threshold is reached (default 85%)
+   - Safety limits prevent unbounded generation (max iterations: 8, max Q&A per chapter: 60)
+   - Handles diminishing returns by stopping if no new questions are generated
+
+**Coverage Mode Parameters:**
+```bash
+--coverage-mode                           # Enable coverage-driven generation
+--coverage-threshold 0.85                 # Target concept coverage (85%)
+--concepts-max 50                         # Max concepts to extract per chapter
+--max-qa-per-chapter-safety 60           # Safety cap on Q&A pairs per chapter
+--max-iterations 8                        # Max generation rounds per chapter
+```
+
+**When to Use Coverage Mode:**
+- **Comprehensive documentation**: When you need thorough coverage of all topics in technical manuals
+- **Training materials**: For educational content where missing key concepts would be problematic  
+- **Quality over quantity**: When systematic coverage is more important than hitting specific question counts
+- **Complex chapters**: For content-rich chapters where size-based generation might miss important topics
+
+**Size-based vs Coverage Mode Comparison:**
+
+| Aspect | Size-based Mode | Coverage Mode |
+|--------|----------------|---------------|
+| **Question Count** | Fixed (≈ tokens/350, max 10) | Adaptive (varies by content complexity) |
+| **Coverage** | Random/chance-based | Systematic concept coverage |
+| **Performance** | Fast, single LLM call per chapter | Slower, multiple iterative calls |
+| **Consistency** | Predictable output size | Variable output size based on content |
+| **Best For** | Large-scale processing, consistent output | Quality documentation, comprehensive coverage |
+
+**Coverage Mode Example Workflow:**
+
+For a chapter about "Database Configuration":
+1. **Extract Concepts**: Identifies 15 concepts like "Connection Pooling", "Index Optimization", "Backup Strategies"
+2. **Iteration 1**: Generates 5 Q&A covering concepts C1, C3, C7, C9, C12 (33% coverage)
+3. **Iteration 2**: Generates 4 Q&A covering concepts C2, C4, C5, C11 (60% coverage)
+4. **Iteration 3**: Generates 3 Q&A covering concepts C6, C8, C10 (80% coverage)  
+5. **Iteration 4**: Generates 2 Q&A covering concepts C13, C14 (93% coverage)
+6. **Complete**: Coverage threshold exceeded, returns 14 Q&A pairs ensuring comprehensive database configuration coverage
 
 Dependencies:
 - python-docx, openai, tiktoken, tenacity (for retries)
