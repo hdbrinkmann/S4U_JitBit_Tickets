@@ -692,11 +692,15 @@ def want_json_mode() -> bool:
 
 def build_messages_for_chapter(title: str, content: str, n: int) -> List[Dict[str, str]]:
     system = (
-        "You are an expert knowledge designer. Based only on the provided chapter, "
+        "You are an expert knowledge designer. " \
+        "Read the provided chapter text carefully and understand its content fully"
+        "Based only on the provided chapter, "
         "generate highly relevant question and answer pairs that help readers understand the material. "
         "Try to cover key concepts, definitions, and insights from the chapter. "
         "Also try to generate questions, a user might realistically ask if he did NOT read the chapter. "
+        "Ideally, generate questions in the 'how do I ...' format."
         "Our aim is to help users understand the chapter content through these Q&A pairs. "
+        "and to mimic a realistic user curiosity. "
         "Answers must be grounded strictly in the chapter content."
     )
     user = (

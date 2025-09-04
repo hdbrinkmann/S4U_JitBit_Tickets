@@ -1091,6 +1091,15 @@ python3 scripts/generate_qa_from_docx.py qa --input QA_CHAPTERS --output QA_OUTP
 python3 scripts/generate_qa_from_docx.py docx --input QA_OUTPUT --output QA_DOCX
 ```
 
+**Example: Complete pipeline to generate DOCX from existing Q&A JSON files:**
+```bash
+# If you already have Q&A JSON files in QA_OUTPUT, convert them directly to DOCX
+python3 scripts/generate_qa_from_docx.py docx --input QA_OUTPUT --output QA_DOCX
+
+# This will create DOCX files like: QA_DOCX/QA-{document_name}.docx
+# Each DOCX contains a table with columns: Question | Answer
+```
+
 Options:
 - --heading-level N
   - Which heading style to treat as chapter boundary (default 1)
@@ -1139,9 +1148,9 @@ python3 scripts/generate_qa_from_docx.py qa \
   --output QA_OUTPUT \
   --coverage-mode \
   --coverage-threshold 0.85 \
-  --concepts-max 50 \
-  --max-qa-per-chapter-safety 60 \
-  --max-iterations 8
+  --concepts-max 100 \
+  --max-qa-per-chapter-safety 100 \
+  --max-iterations 16
 ```
 
 Intermediate JSON schema (QA_CHAPTERS/*.json):
