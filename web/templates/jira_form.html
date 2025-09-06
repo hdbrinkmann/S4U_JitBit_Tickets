@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}Jira Workflow - Workflow App{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="max-w-3xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-gray-900">Jira Workflow</h1>
+            <p class="mt-1 text-sm text-gray-600">
+                Export resolved tickets, process with LLM, deduplicate, and generate DOCX documents
+            </p>
+        </div>
+
+        <!-- Environment Status Warning -->
+        {% if env_status.jira.status != 'ok' or env_status.llm.status != 'ok' %}
+        <div class="mb-6 bg-red-50 border border-red-200 rounded-md p-4">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L10 10.586l1.293-1.293a1 1 0 111.414 1.414L11.414 12l1.293 1.293a1 1 0 01-1.414 1.414L10 13.414l-1.293 1.293a1 1 0 01-1.414-1.414L9.586 12 8.293 10.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-red-800">Environment Issues Detected</h3>
+                    <div class="mt-2 text-sm text-red-700">
+                        <p>Please check your environment configuration before starting the workflow:</p>
+                        <ul class="list-disc list-inside mt-1">
+                            {% if env_status.jira.status != 'ok' %}
+                            <li>Jira: {{ env_status.jira.ok }}/{{ env_status.jira.total }} checks passed</li>
+                            {% endif %}
+                            {% if env_status.llm.status != 'ok' %}
+                            <li>LLM: {{ env_status.llm.ok }}/{{ env_status.llm.total }} checks passed</li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Form -->
+        <form action="/jira/start" method="post" class="space-y-6" onkeydown="return event.key != 'Enter';">
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Basic Parameters</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Configure the main workflow parameters.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- Project -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label class="text-base font-medium text-gray-900">Project</label>
+                                <p class="text-sm leading-5 text-gray-500">Select the Jira project to export</p>
+                                <fieldset class="mt-4">
+                                    <legend class="sr-only">Project selection</legend>
+                                    <div class="space-y-4 sm:flex sm:items-center sm:space-y-0 sm:space-x-10">
+                                        {% for project in projects %}
+                                        <div class="flex items-center">
+                                            <input id="{{ project }}" name="project" type="radio" value="{{ project }}" 
+                                                   {% if project == 'SUP' %}checked{% endif %}
+                                                   class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300">
+                                            <label for="{{ project }}" class="ml-3 block text-sm font-medium text-gray-700">
+                                                {{ project }} 
+                                                {% if project == 'SUP' %}(Danish Support){% elif project == 'TMS' %}(Timemap Support){% endif %}
+                                            </label>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </fieldset>
+                            </div>
+
+                            <!-- Resolved After -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="resolved_after" class="block text-sm font-medium text-gray-700">Resolved After</label>
+                                <input type="date" name="resolved_after" id="resolved_after" required
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                                <p class="mt-2 text-sm text-gray-500">Only include tickets resolved after this date (required)</p>
+                            </div>
+
+                            <!-- Resolved Before -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="resolved_before" class="block text-sm font-medium text-gray-700">Resolved Before</label>
+                                <input type="date" name="resolved_before" id="resolved_before"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                                <p class="mt-2 text-sm text-gray-500">Optional end date for date range filtering</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Export Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Export Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control Jira export behavior.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- Jira Limit -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="jira_limit" class="block text-sm font-medium text-gray-700">Export Limit</label>
+                                <input type="number" name="jira_limit" id="jira_limit"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="Optional">
+                                <p class="mt-1 text-sm text-gray-500">Limit number of tickets to export</p>
+                            </div>
+
+                            <!-- Progress -->
+                            <div class="col-span-6">
+                                <div class="flex items-start">
+                                    <div class="flex items-center h-5">
+                                        <input id="progress" name="progress" type="checkbox"
+                                               class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded">
+                                    </div>
+                                    <div class="ml-3 text-sm">
+                                        <label for="progress" class="font-medium text-gray-700">Show detailed progress</label>
+                                        <p class="text-gray-500">Enable verbose progress output during Jira export</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LLM Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">LLM Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control LLM processing behavior.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- LLM Limit -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="llm_limit" class="block text-sm font-medium text-gray-700">LLM Limit</label>
+                                <input type="number" name="llm_limit" id="llm_limit"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="Optional">
+                                <p class="mt-1 text-sm text-gray-500">Limit number of tickets for LLM processing</p>
+                            </div>
+
+                            <!-- LLM Max Calls -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="llm_max_calls" class="block text-sm font-medium text-gray-700">Max API Calls</label>
+                                <input type="number" name="llm_max_calls" id="llm_max_calls"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="Optional">
+                                <p class="mt-1 text-sm text-gray-500">Maximum LLM API calls</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Deduplication Settings -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Deduplication</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Configure similarity analysis and deduplication.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- Similarity Threshold -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="dedup_threshold" class="block text-sm font-medium text-gray-700">Similarity Threshold</label>
+                                <input type="number" name="dedup_threshold" id="dedup_threshold" 
+                                       value="{{ defaults.DEDUP_THRESHOLD }}" step="0.01" min="0" max="1"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                                <p class="mt-1 text-sm text-gray-500">High threshold for automatic merging (default: 0.84)</p>
+                            </div>
+
+                            <!-- Low Threshold -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="dedup_threshold_low" class="block text-sm font-medium text-gray-700">Low Threshold</label>
+                                <input type="number" name="dedup_threshold_low" id="dedup_threshold_low" 
+                                       value="{{ defaults.DEDUP_THRESHOLD_LOW }}" step="0.01" min="0" max="1"
+                                       class="mt-1 focus:ring-green-500 focus:border-green-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                                <p class="mt-1 text-sm text-gray-500">Low threshold for manual review (default: 0.78)</p>
+                            </div>
+
+                            <!-- Skip Deduplication -->
+                            <div class="col-span-6">
+                                <div class="flex items-start">
+                                    <div class="flex items-center h-5">
+                                        <input id="skip_deduplication" name="skip_deduplication" type="checkbox"
+                                               class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded">
+                                    </div>
+                                    <div class="ml-3 text-sm">
+                                        <label for="skip_deduplication" class="font-medium text-gray-700">Skip deduplication</label>
+                                        <p class="text-gray-500">Bypass the deduplication step entirely</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Run Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Run Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control workflow execution behavior.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="space-y-6">
+                            <!-- Skip Existing -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="skip_existing" name="skip_existing" type="checkbox" checked
+                                           class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="skip_existing" class="font-medium text-gray-700">Skip existing outputs</label>
+                                    <p class="text-gray-500">Skip steps when output files already exist</p>
+                                </div>
+                            </div>
+
+                            <!-- Overwrite -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="overwrite" name="overwrite" type="checkbox"
+                                           class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="overwrite" class="font-medium text-gray-700">Overwrite existing files</label>
+                                    <p class="text-gray-500">Force re-run steps even if outputs exist</p>
+                                </div>
+                            </div>
+
+                            <!-- Append -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="append" name="append" type="checkbox"
+                                           class="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="append" class="font-medium text-gray-700">Append mode</label>
+                                    <p class="text-gray-500">Append to existing exports where supported</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit -->
+            <div class="flex justify-end">
+                <a href="/" class="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 mr-3">
+                    Cancel
+                </a>
+                <button type="submit" 
+                        class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                        {% if env_status.jira.status != 'ok' or env_status.llm.status != 'ok' %}disabled{% endif %}>
+                    Start Jira Workflow
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

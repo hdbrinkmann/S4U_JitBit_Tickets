@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% block title %}Jitbit Workflow - Workflow App{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="max-w-3xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-gray-900">Jitbit Workflow</h1>
+            <p class="mt-1 text-sm text-gray-600">
+                Export tickets & knowledge base, process with LLM, and generate DOCX documents
+            </p>
+        </div>
+
+        <!-- Environment Status Warning -->
+        {% if env_status.jitbit.status != 'ok' or env_status.llm.status != 'ok' %}
+        <div class="mb-6 bg-red-50 border border-red-200 rounded-md p-4">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L10 10.586l1.293-1.293a1 1 0 111.414 1.414L11.414 12l1.293 1.293a1 1 0 01-1.414 1.414L10 13.414l-1.293 1.293a1 1 0 01-1.414-1.414L9.586 12 8.293 10.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-red-800">Environment Issues Detected</h3>
+                    <div class="mt-2 text-sm text-red-700">
+                        <p>Please check your environment configuration before starting the workflow:</p>
+                        <ul class="list-disc list-inside mt-1">
+                            {% if env_status.jitbit.status != 'ok' %}
+                            <li>Jitbit: {{ env_status.jitbit.ok }}/{{ env_status.jitbit.total }} checks passed</li>
+                            {% endif %}
+                            {% if env_status.llm.status != 'ok' %}
+                            <li>LLM: {{ env_status.llm.ok }}/{{ env_status.llm.total }} checks passed</li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Form -->
+        <form action="/jitbit/start" method="post" class="space-y-6" onkeydown="return event.key != 'Enter';">
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Basic Parameters</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Configure the main workflow parameters.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- Start ID -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="start_id" class="block text-sm font-medium text-gray-700">Start Ticket ID</label>
+                                <input type="number" name="start_id" id="start_id" required
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="23000">
+                                <p class="mt-2 text-sm text-gray-500">Starting ticket ID for export (required)</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">LLM Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control LLM processing behavior.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- LLM Limit -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="llm_limit" class="block text-sm font-medium text-gray-700">LLM Limit</label>
+                                <input type="number" name="llm_limit" id="llm_limit"
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="Optional">
+                                <p class="mt-1 text-sm text-gray-500">Limit number of tickets for LLM processing</p>
+                            </div>
+
+                            <!-- LLM Max Calls -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="llm_max_calls" class="block text-sm font-medium text-gray-700">Max API Calls</label>
+                                <input type="number" name="llm_max_calls" id="llm_max_calls"
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       placeholder="Optional">
+                                <p class="mt-1 text-sm text-gray-500">Maximum LLM API calls</p>
+                            </div>
+
+                            <!-- Save Interval -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="llm_save_interval" class="block text-sm font-medium text-gray-700">Save Interval</label>
+                                <input type="number" name="llm_save_interval" id="llm_save_interval" 
+                                       value="{{ defaults.LLM_SAVE_INTERVAL }}"
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md">
+                                <p class="mt-1 text-sm text-gray-500">Save progress every N tickets</p>
+                            </div>
+
+                            <!-- Newest First -->
+                            <div class="col-span-6">
+                                <div class="flex items-start">
+                                    <div class="flex items-center h-5">
+                                        <input id="newest_first" name="newest_first" type="checkbox"
+                                               class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                    </div>
+                                    <div class="ml-3 text-sm">
+                                        <label for="newest_first" class="font-medium text-gray-700">Process newest tickets first</label>
+                                        <p class="text-gray-500">Process tickets in reverse chronological order</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Run Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Run Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control workflow execution behavior.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="space-y-6">
+                            <!-- Skip Existing -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="skip_existing" name="skip_existing" type="checkbox" checked
+                                           class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="skip_existing" class="font-medium text-gray-700">Skip existing outputs</label>
+                                    <p class="text-gray-500">Skip steps when output files already exist</p>
+                                </div>
+                            </div>
+
+                            <!-- Overwrite -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="overwrite" name="overwrite" type="checkbox"
+                                           class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="overwrite" class="font-medium text-gray-700">Overwrite existing files</label>
+                                    <p class="text-gray-500">Force re-run steps even if outputs exist</p>
+                                </div>
+                            </div>
+
+                            <!-- Append -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="append" name="append" type="checkbox"
+                                           class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="append" class="font-medium text-gray-700">Append mode</label>
+                                    <p class="text-gray-500">Append to existing exports where supported</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit -->
+            <div class="flex justify-end">
+                <a href="/" class="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 mr-3">
+                    Cancel
+                </a>
+                <button type="submit" 
+                        class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        {% if env_status.jitbit.status != 'ok' or env_status.llm.status != 'ok' %}disabled{% endif %}>
+                    Start Jitbit Workflow
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

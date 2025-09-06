@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Workflow App{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        /* Custom styles for status indicators */
+        .status-ok { @apply text-green-600 bg-green-100 px-2 py-1 rounded-full text-sm; }
+        .status-error { @apply text-red-600 bg-red-100 px-2 py-1 rounded-full text-sm; }
+        .status-pending { @apply text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full text-sm; }
+        .status-running { @apply text-blue-600 bg-blue-100 px-2 py-1 rounded-full text-sm animate-pulse; }
+        .step-pending { @apply text-gray-500; }
+        .step-running { @apply text-blue-600 font-medium animate-pulse; }
+        .step-success { @apply text-green-600; }
+        .step-failed { @apply text-red-600; }
+        .step-skipped { @apply text-yellow-600; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="bg-white shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <h1 class="text-xl font-bold text-gray-900">Workflow App</h1>
+                    </div>
+                    <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
+                        <a href="/" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            Dashboard
+                        </a>
+                        <a href="/jitbit" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            Jitbit Flow
+                        </a>
+                        <a href="/jira" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            Jira Flow
+                        </a>
+                        <a href="/runs" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            Runs
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="bg-white border-t border-gray-200">
+        <div class="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
+            <div class="text-center text-sm text-gray-500">
+                Workflow App v1.0.0 - CLI and Web UI for Jitbit and Jira ticket processing
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Auto-refresh functionality for active runs
+        if (typeof window.autoRefreshRunId !== 'undefined') {
+            setInterval(function() {
+                htmx.ajax('GET', '/runs/' + window.autoRefreshRunId + '/status', {
+                    target: '#run-status',
+                    swap: 'innerHTML'
+                });
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

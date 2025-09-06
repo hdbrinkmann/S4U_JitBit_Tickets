@@ -60,3 +60,6 @@ documents/
 
 # Q&A Generation folders
 QA_*/
+
+# Workflow App runs - exclude all run data and logs
+runs/

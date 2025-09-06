@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Workflow App{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="border-4 border-dashed border-gray-200 rounded-lg p-8">
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">Workflow Dashboard</h1>
+            <p class="text-lg text-gray-600 mb-8">Orchestrate Jitbit and Jira ticket processing workflows</p>
+        </div>
+
+        <!-- Environment Status -->
+        <div class="mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">Environment Status</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Jitbit Status -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            {% if env_status.jitbit.status == 'ok' %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-green-100">
+                                <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% else %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-red-100">
+                                <svg class="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="ml-3">
+                            <h3 class="text-sm font-medium text-gray-900">Jitbit</h3>
+                            <p class="text-sm text-gray-500">{{ env_status.jitbit.ok }}/{{ env_status.jitbit.total }} checks passed</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Jira Status -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            {% if env_status.jira.status == 'ok' %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-green-100">
+                                <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% else %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-red-100">
+                                <svg class="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="ml-3">
+                            <h3 class="text-sm font-medium text-gray-900">Jira</h3>
+                            <p class="text-sm text-gray-500">{{ env_status.jira.ok }}/{{ env_status.jira.total }} checks passed</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LLM Status -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            {% if env_status.llm.status == 'ok' %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-green-100">
+                                <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% else %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-red-100">
+                                <svg class="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="ml-3">
+                            <h3 class="text-sm font-medium text-gray-900">LLM (Scaleway)</h3>
+                            <p class="text-sm text-gray-500">{{ env_status.llm.ok }}/{{ env_status.llm.total }} checks passed</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workflow Cards -->
+        <div class="mb-8">
+            <h2 class="text-xl font-semibold text-gray-900 mb-4">Available Workflows</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Jitbit Flow Card -->
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div class="px-6 py-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-blue-500 text-white">
+                                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-gray-900">Jitbit Workflow</h3>
+                                <p class="text-sm text-gray-500">Export tickets & KB, process with LLM, generate DOCX</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-6 py-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.414L10 9.586V6z" clip-rule="evenodd"/>
+                                </svg>
+                                ~15-30 min
+                            </div>
+                            <a href="/jitbit" class="text-blue-600 hover:text-blue-500 font-medium">
+                                Start Workflow →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Jira Flow Card -->
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div class="px-6 py-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-green-500 text-white">
+                                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-gray-900">Jira Workflow</h3>
+                                <p class="text-sm text-gray-500">Export tickets, process with LLM, deduplicate, generate DOCX</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-6 py-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.414L10 9.586V6z" clip-rule="evenodd"/>
+                                </svg>
+                                ~20-45 min
+                            </div>
+                            <a href="/jira" class="text-green-600 hover:text-green-500 font-medium">
+                                Start Workflow →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Runs -->
+        {% if recent_runs %}
+        <div>
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-900">Recent Runs</h2>
+                <a href="/runs" class="text-blue-600 hover:text-blue-500 font-medium">View all →</a>
+            </div>
+            <div class="bg-white shadow overflow-hidden sm:rounded-md">
+                <ul class="divide-y divide-gray-200">
+                    {% for run in recent_runs %}
+                    <li>
+                        <a href="/runs/{{ run.id }}" class="block hover:bg-gray-50 px-6 py-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0">
+                                        {% if run.status == 'completed' %}
+                                        <div class="h-2 w-2 bg-green-400 rounded-full"></div>
+                                        {% elif run.status == 'failed' %}
+                                        <div class="h-2 w-2 bg-red-400 rounded-full"></div>
+                                        {% elif run.status == 'running' %}
+                                        <div class="h-2 w-2 bg-blue-400 rounded-full animate-pulse"></div>
+                                        {% else %}
+                                        <div class="h-2 w-2 bg-gray-400 rounded-full"></div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="ml-4">
+                                        <div class="text-sm font-medium text-gray-900">{{ run.id }}</div>
+                                        <div class="text-sm text-gray-500">
+                                            {{ run.flow|default('Unknown') }}
+                                            {% if run.project %} - {{ run.project }}{% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-sm text-gray-500">
+                                    {{ run.created[:19]|replace('T', ' ') }}
+                                </div>
+                            </div>
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

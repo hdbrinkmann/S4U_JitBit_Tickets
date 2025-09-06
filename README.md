@@ -4,7 +4,14 @@ This repository contains Python programs that work together to extract Jitbit an
 
 The App runs on the users' local machine. All data is located on this machine. AI inference provider is Scaleway, a French company, from Scaleways' Paris datacenter. All necessary documents (TOS and DPA) are in place, the legal relationship is between S4U and Scaleway. 
 
-The process is as follows:
+To run the process with the new comprehensive Web-UI: 
+
+# Start the web server
+python cli.py web --port 8787
+
+# Open browser to: http://127.0.0.1:8787
+
+The underlying process is as follows:
 
 1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py", also download the JitBit Knowledge Base with "kb_export_json.py"
 2) Download Jira (TP,TM) ticket data and store them into Jira_relevant_tickets.json with "jira_relevant_tickets.py"
@@ -81,6 +88,248 @@ SCW_EMBEDDING_MODEL=bge-multilingual-gemma2      # default if unset
 ```
 
 **Security Note**: Never commit the `.env` file to version control. Ensure `.env` is included in your `.gitignore`.
+
+------------------------------------------------------------
+
+## 🚀 NEW: Workflow App - Web UI & CLI for Complete Workflow Automation
+
+**We've added a powerful new workflow orchestration system that provides both a beautiful web interface and CLI automation for running complete end-to-end ticket processing workflows!**
+
+### ✨ Quick Start
+
+#### Web Interface (Recommended)
+```bash
+# Install additional dependencies
+pip install typer fastapi uvicorn jinja2 python-multipart
+
+# Start the web server
+python cli.py web --port 8787
+
+# Open browser to: http://127.0.0.1:8787
+```
+
+#### CLI Interface (For Automation)
+```bash
+# Check environment configuration
+python cli.py env-check
+
+# Run complete Jitbit workflow
+python cli.py run-jitbit --start-id 23000
+
+# Run complete Jira workflow  
+python cli.py run-jira --project SUP --resolved-after 2024-12-01
+```
+
+### 🎯 What the Workflow App Does
+
+Instead of running individual scripts manually, the Workflow App orchestrates **complete end-to-end workflows** with:
+
+#### **Jitbit Workflow (6 automated steps)**:
+1. **Environment Validation** — Verify all API tokens and URLs
+2. **Export Tickets** — Run `ticket_relevante_felder.py` with your parameters  
+3. **Export Knowledge Base** — Run `kb_export_json.py` automatically
+4. **LLM Processing** — Run `process_tickets_with_llm.py` with configurable limits
+5. **Generate Ticket DOCX** — Run `tickets_to_docx.py` to create documents
+6. **Generate KB DOCX** — Run `kb_to_docx.py` for knowledge base document
+
+#### **Jira Workflow (5 automated steps)**:
+1. **Environment Validation** — Verify Jira and LLM credentials
+2. **Export Tickets** — Run `jira_relevant_tickets.py` with project and date filters
+3. **LLM Processing** — Process tickets with configurable parameters
+4. **Deduplication** — Run `scripts/dedupe_tickets.py` with similarity analysis
+5. **Generate DOCX** — Create final documents from deduplicated data
+
+### 🌟 Web Interface Features
+
+#### **Beautiful Dashboard**
+- **Environment Status Cards**: Visual indicators showing 7/7 configuration checks
+- **Workflow Cards**: Click-to-start interfaces for both Jitbit and Jira workflows
+- **Recent Runs**: Quick access to your latest workflow executions
+
+#### **Interactive Forms with Full Parameter Control**
+
+**Jitbit Workflow Form**:
+- **Basic Parameters**:
+  - `Start Ticket ID` (required) — Starting ticket ID for export (e.g., 23000)
+- **LLM Options**:
+  - `LLM Limit` (optional) — Limit number of tickets for LLM processing
+  - `Max API Calls` (optional) — Maximum LLM API calls to prevent runaway costs
+  - `Save Interval` (default: 50) — Save progress every N tickets during LLM processing
+  - `Process newest tickets first` — Process in reverse chronological order
+- **Run Options**:
+  - ✅ `Skip existing outputs` (default: ON) — Skip steps when output files already exist
+  - ❌ `Overwrite existing files` (default: OFF) — Force re-run all steps even if outputs exist
+  - ❌ `Append mode` (default: OFF) — Append to existing exports where supported
+
+**Jira Workflow Form**:
+- **Basic Parameters**:
+  - `Project` — Radio buttons for SUP (Danish support) or TMS (Timemap support)
+  - `Resolved After` (required) — Date in YYYY-MM-DD format for ticket filtering
+  - `Resolved Before` (optional) — End date for date range filtering
+- **Advanced Export Options**:
+  - `Jira Limit` (optional) — Limit number of tickets to export from Jira
+  - `Show detailed progress` — Enable verbose progress output during Jira export
+- **LLM Options**:
+  - `LLM Limit` (optional) — Limit tickets for LLM processing
+  - `Max API Calls` (optional) — Cap total LLM API calls
+- **Deduplication Settings**:
+  - `Similarity Threshold` (default: 0.84) — High threshold for automatic merging
+  - `Low Threshold` (default: 0.78) — Low threshold for manual review flagging
+  - `Skip deduplication` — Bypass the deduplication step entirely
+- **Run Options**: Same skip/overwrite/append controls as Jitbit
+
+#### **Real-Time Progress Dashboard**
+When you submit a workflow, you're immediately redirected to a beautiful progress tracking page:
+
+**Visual Timeline**:
+- 🔄 **Running Steps**: Blue spinning indicators with live status
+- ✅ **Completed Steps**: Green checkmarks with duration timing
+- ⏭️ **Skipped Steps**: Yellow clock icons for existing outputs
+- ❌ **Failed Steps**: Red X marks with error details
+- ⏳ **Pending Steps**: Gray circles waiting for execution
+
+**Live Execution Log**:
+- **Terminal-style display** with auto-scrolling to latest output
+- **Real-time script output** showing exactly what you see when running scripts manually:
+  ```
+  [2025-09-06 14:45:02] === JITBIT GESCHLOSSENE TICKETS - RELEVANTE FELDER EXPORT ===
+  [2025-09-06 14:45:03] Sammle alle verfügbaren Ticket-IDs mit Pagination...
+  [2025-09-06 14:45:04] Lade Batch 1 (Tickets 1-300)...
+  [2025-09-06 14:45:05] → 300 Tickets geladen (Gesamt: 300)
+  [2025-09-06 14:45:10] Fortschritt: 2.3% - 100/4332 - ETA: 35min
+  [2025-09-06 14:45:15] Fortschritt: 4.6% - 200/4332 - ETA: 30min
+  ```
+- **Auto-scrolling**: Latest updates automatically scroll into view
+- **Live refresh**: Updates every 2 seconds during active runs
+
+**Generated Artifacts Panel**:
+- Direct links to all generated files (JSON, DOCX)
+- File sizes and creation timestamps  
+- Click to open files directly from the browser
+
+#### **Run History & Management**
+- **Browse all runs**: Complete history with status indicators
+- **Run details**: Click any run to see full execution details
+- **Persistent logging**: All runs saved in timestamped directories
+- **Artifact preservation**: Generated files automatically copied and tracked
+
+### 🔧 Advanced Configuration Options
+
+#### **Port Configuration** (Never uses port 8000)
+- **Default**: `127.0.0.1:8787`
+- **Environment**: Set `WORKFLOW_APP_PORT=8787` in `.env`
+- **CLI**: `python cli.py web --port 8787`
+- **Auto-fallback**: `--auto-port` tries 8787→8788→8789 if busy
+
+#### **Skip/Overwrite Logic**
+- **Skip Existing** (default: ✅): Intelligently skip steps when output files already exist and are valid
+- **Overwrite** (default: ❌): Force re-run all steps even if outputs exist
+- **Append** (default: ❌): Append to existing exports where scripts support it
+
+*Example*: If you have existing `JitBit_relevante_Tickets.json` and `JitBit_Knowledgebase.json`:
+- **Skip ON, Overwrite OFF**: Skips exports, runs LLM processing and DOCX generation only
+- **Skip OFF, Overwrite ON**: Re-runs all steps from scratch
+- **Skip ON, Append ON**: Skips exports but appends new data to existing LLM outputs
+
+#### **LLM Processing Controls**
+- **LLM Limit**: Limit number of tickets sent to LLM (cost control for testing)
+- **Max API Calls**: Hard cap on total LLM requests (prevents runaway costs)
+- **Save Interval**: Auto-save progress every N tickets (default: 50)
+- **Newest First**: Process tickets in reverse chronological order
+
+#### **Jira-Specific Settings**
+- **Progress Mode**: Enable detailed progress output during Jira export
+- **Date Range**: Flexible filtering with resolved-after (required) and resolved-before (optional)
+- **Deduplication Thresholds**: Fine-tune similarity detection (0.84/0.78 defaults)
+
+### 🎮 User Experience Benefits
+
+#### **Background Execution**
+- **Navigate freely**: Start a workflow, then browse other parts of the app
+- **Multiple workflows**: Run up to 2 workflows simultaneously  
+- **Server-based**: Workflows continue even if you close your browser
+- **Return anytime**: Click on any run to see current status and progress
+
+#### **Real-Time Feedback**
+- **Live progress**: See exactly what's happening at each step
+- **Progress percentages**: Real ETAs from your scripts (e.g., "ETA: 25min")
+- **Batch tracking**: Live updates on ticket processing ("Batch 5 loading...")
+- **Error visibility**: Immediate feedback if any step fails
+
+#### **Smart Workflow Management**
+- **Environment validation**: Blocks execution if API tokens missing
+- **Artifact tracking**: All generated files linked and accessible
+- **Run isolation**: Each workflow gets its own timestamped directory
+- **Log preservation**: Complete execution history saved permanently
+
+#### **Form Validation & UX**
+- **ENTER key prevention**: Forms only submit via button clicks (no accidental submission)
+- **Smart validation**: Empty optional fields handled gracefully
+- **Environmental warnings**: Visual alerts if credentials are missing
+- **Parameter defaults**: Pre-filled with sensible values from configuration
+
+### 📊 Monitoring & Debugging
+
+#### **Run Status Tracking**
+Every workflow execution creates a timestamped directory: `runs/YYYYMMDD-HHMMSS-flow-project/`
+- `status.json` — Step-by-step execution status with timestamps
+- `params.json` — Input parameters (secrets redacted for security)
+- `flow.log` — Complete execution log with all script output
+- `artifacts/` — Copies of all generated files for easy access
+
+#### **Environment Health**
+- **7-point validation**: Comprehensive checks for Jitbit, Jira, and LLM credentials
+- **URL validation**: Ensures API endpoints are properly formatted  
+- **Token presence**: Verifies all required authentication is available
+- **Visual dashboard**: Green/red status indicators for quick assessment
+
+#### **Error Recovery**
+- **Graceful failures**: Failed steps clearly marked with error details
+- **Partial artifacts**: Successfully completed steps preserved even if workflow fails
+- **Re-run capability**: Can restart workflows with different parameters
+- **Debug support**: Full logging and parameter tracking for troubleshooting
+
+### 🔐 Security Features
+
+- **Credential protection**: Sensitive data redacted from logs and saved parameters
+- **Local execution**: Everything runs on your machine, data stays local
+- **Environment validation**: Prevents workflows from running with missing credentials
+- **Secure logging**: API tokens and keys automatically masked in all log output
+
+### 💡 Migration from Manual Script Execution
+
+#### **Before** (Manual Process):
+```bash
+python3 ticket_relevante_felder.py --start-id 23000 --yes
+python3 kb_export_json.py --out JitBit_Knowledgebase.json --yes  
+python3 process_tickets_with_llm.py --limit 100 --max-calls 200
+python3 tickets_to_docx.py --input Ticket_Data_Jitbit.json
+python3 kb_to_docx.py --input JitBit_Knowledgebase.json
+```
+
+#### **After** (One-Click Workflow):
+- Open browser → Click "Start Workflow" → Fill form → Submit
+- **Or via CLI**: `python cli.py run-jitbit --start-id 23000 --llm-limit 100`
+
+#### **Benefits of the Workflow App**:
+- ✅ **No script coordination**: All steps run in correct sequence automatically
+- ✅ **Parameter management**: Web forms with validation vs manual command assembly
+- ✅ **Progress visibility**: Live progress vs waiting blindly for completion  
+- ✅ **Error handling**: Clear failure messages vs cryptic script errors
+- ✅ **File management**: Automatic output naming and organization
+- ✅ **Run history**: Track all executions vs losing track of what you've done
+- ✅ **Multi-tasking**: Background execution vs blocking your terminal
+
+### 🎉 Production Ready
+
+The Workflow App is designed for daily production use:
+- **Reliable**: Robust error handling and recovery
+- **Scalable**: Configurable limits and batch processing  
+- **Monitorable**: Complete logging and progress tracking
+- **Secure**: Environment validation and credential protection
+- **User-friendly**: Beautiful interface with real-time feedback
+
+**Ready to streamline your ticket processing workflows!**
 
 ------------------------------------------------------------
 ## 0) Export Jitbit Knowledge Base (kb_export_json.py)
