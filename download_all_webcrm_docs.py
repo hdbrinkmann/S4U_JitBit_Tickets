@@ -5,6 +5,7 @@ Script to download all PDF, DOCX, and DOC files from webcrm API
 
 import os
 import requests
+import argparse
 from dotenv import load_dotenv
 from pathlib import Path
 import time
@@ -37,24 +38,18 @@ def get_access_token(api_key):
     
     return None
 
-def download_all_documents(access_token):
-    """Download all PDF, DOCX, and DOC files"""
-    
+def download_all_documents(access_token, target_extensions, target_folders, skip_existing=False):
+    """Download all specified file types from specified folders"""
+
     base_url = "https://api.webcrm.com"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
     
-    # File extensions to download
-    target_extensions = {'.pdf', '.docx', '.doc', '.rtf'}
-    
-    # Folders to download from
-    target_folders = {'Contracts', 'Data Processing Agreement', 'Sales Terms'}
-    
     print(f"\n📄 Fetching all documents...")
-    print(f"   Target extensions: {', '.join(target_extensions)}")
-    print(f"   Target folders: {', '.join(target_folders)}")
+    print(f"   Target extensions: {', '.join(sorted(target_extensions))}")
+    print(f"   Target folders: {', '.join(sorted(target_folders))}")
     
     # Create main download directory
     download_dir = Path("webcrm_documents")
@@ -69,6 +64,7 @@ def download_all_documents(access_token):
     # Statistics
     target_docs = []
     skipped_count = 0
+    skipped_existing = 0
     page = 1
     
     # First pass: collect all target documents
@@ -112,6 +108,8 @@ def download_all_documents(access_token):
         
         print(f"\n   ✅ Found {len(target_docs)} documents to download")
         print(f"   ⏭️  Skipped {skipped_count} other files")
+        if skip_existing:
+            print(f"   🔍 Will check for existing files and skip if found")
         
         # Second pass: download all target documents
         print(f"\n📥 Phase 2: Downloading {len(target_docs)} documents...")
@@ -139,8 +137,24 @@ def download_all_documents(access_token):
                 target_dir = pdf_dir
             else:
                 target_dir = word_dir
-            
-            # Create unique filename if duplicate
+
+            # Check if file already exists and skip_existing is enabled
+            if skip_existing:
+                # Check if any version of this file already exists (base name or numbered versions)
+                base_pattern = safe_name
+                if '.' in safe_name:
+                    name_part, ext_part = safe_name.rsplit('.', 1)
+                    # Look for files that start with the base name (including numbered versions)
+                    existing_files = list(target_dir.glob(f"{name_part}*.{ext_part}"))
+                else:
+                    existing_files = list(target_dir.glob(f"{safe_name}*"))
+
+                if existing_files:
+                    skipped_existing += 1
+                    print(f"⏭️  {i}/{len(target_docs)}: {safe_name} - Skipped (already exists)")
+                    continue
+
+            # Create unique filename if duplicate (only for actual downloads)
             file_path = target_dir / safe_name
             counter = 1
             while file_path.exists():
@@ -150,23 +164,23 @@ def download_all_documents(access_token):
                 else:
                     file_path = target_dir / f"{safe_name}_{counter}"
                 counter += 1
-            
+
             # Download the file
             download_url = f"{base_url}/Documents/{doc_id}/Download"
-            
+
             try:
                 file_response = requests.get(download_url, headers=headers, timeout=30)
-                
+
                 if file_response.status_code == 200:
                     with open(file_path, 'wb') as f:
                         f.write(file_response.content)
-                    
+
                     actual_size = len(file_response.content)
                     downloaded += 1
-                    
+
                     log_entry = f"✅ {i}/{len(target_docs)}: {safe_name} ({actual_size:,} bytes)"
                     print(log_entry)
-                    
+
                     log_entries.append({
                         'id': doc_id,
                         'filename': safe_name,
@@ -176,16 +190,16 @@ def download_all_documents(access_token):
                         'org_id': doc_org_id,
                         'path': str(file_path)
                     })
-                    
+
                     # Rate limiting - don't exceed 250 requests per minute
                     if i % 200 == 0:
                         print(f"   ⏸️  Pausing for rate limit (30 seconds)...")
                         time.sleep(30)
-                    
+
                 else:
                     failed += 1
                     print(f"❌ {i}/{len(target_docs)}: {safe_name} - Download failed: {file_response.status_code}")
-                    
+
             except Exception as e:
                 failed += 1
                 print(f"❌ {i}/{len(target_docs)}: {safe_name} - Error: {str(e)}")
@@ -197,6 +211,7 @@ def download_all_documents(access_token):
             f.write("=" * 60 + "\n\n")
             f.write(f"Total documents scanned: {len(target_docs) + skipped_count}\n")
             f.write(f"Documents downloaded: {downloaded}\n")
+            f.write(f"Skipped (existing files): {skipped_existing}\n")
             f.write(f"Download failures: {failed}\n")
             f.write(f"Skipped (other formats): {skipped_count}\n\n")
             f.write("=" * 60 + "\n\n")
@@ -214,6 +229,7 @@ def download_all_documents(access_token):
         print("\n" + "=" * 60)
         print(f"📊 DOWNLOAD COMPLETE!")
         print(f"   ✅ Downloaded: {downloaded} files")
+        print(f"   ⏭️  Skipped (existing): {skipped_existing} files")
         print(f"   ❌ Failed: {failed} files")
         print(f"   📁 Location: {download_dir}/")
         print(f"      - PDFs: {pdf_dir}/")
@@ -230,28 +246,43 @@ def download_all_documents(access_token):
 
 def main():
     """Main function"""
-    
+
+    parser = argparse.ArgumentParser(description='Download documents from WebCRM API')
+    parser.add_argument('--extensions', nargs='+', default=['pdf', 'docx', 'doc', 'rtf'],
+                       help='File extensions to download (without dots)')
+    parser.add_argument('--folders', nargs='+',
+                       default=['Contracts', 'Data Processing Agreement', 'Sales Terms'],
+                       help='Folders to download from')
+    parser.add_argument('--skip-existing', action='store_true',
+                       help='Skip files that already exist in the download directory')
+
+    args = parser.parse_args()
+
+    # Convert extensions to set with dots
+    target_extensions = {f'.{ext.lower()}' for ext in args.extensions}
+    target_folders = set(args.folders)
+
     # Load environment variables
     load_dotenv()
-    
+
     api_key = os.getenv('WEBCRM_API_KEY')
-    
+
     if not api_key:
         print("❌ Error: WEBCRM_API_KEY not found in .env file")
         return
-    
+
     print(f"✓ API Key loaded: {api_key[:8]}...{api_key[-4:]}")
-    
+
     # Get access token
     access_token = get_access_token(api_key)
-    
+
     if not access_token:
         print("\n❌ Could not authenticate")
         return
-    
+
     # Download all target documents
-    downloaded, failed = download_all_documents(access_token)
-    
+    downloaded, failed = download_all_documents(access_token, target_extensions, target_folders, args.skip_existing)
+
     print("\n" + "=" * 60)
     if downloaded > 0:
         print(f"✅ Successfully downloaded {downloaded} documents")
@@ -263,8 +294,7 @@ def main():
 if __name__ == "__main__":
     print("=" * 60)
     print("WebCRM Documents Bulk Downloader")
-    print("Downloading: PDF, DOCX, DOC, RTF files")
-    print("From folders: Contracts, Data Processing Agreement, Sales Terms")
+    print("Use --extensions and --folders to customize download filters")
     print("=" * 60)
-    
+
     main()

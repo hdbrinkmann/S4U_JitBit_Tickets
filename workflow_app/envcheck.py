@@ -88,17 +88,24 @@ def check_jira_env() -> List[EnvCheckResult]:
     ]
 
 
+def check_webcrm_env() -> List[EnvCheckResult]:
+    """Check WebCRM environment variables."""
+    return [
+        check_env_var(ENV_VARS["WEBCRM_API_KEY"], required=True, description="(WebCRM API key)")
+    ]
+
+
 def check_llm_env() -> List[EnvCheckResult]:
     """Check LLM (Scaleway) environment variables."""
     results = []
-    
+
     # Check for either SCW_SECRET_KEY or SCW_API_KEY
     secret_key = get_env_var(ENV_VARS["SCW_SECRET_KEY"])
     api_key = get_env_var(ENV_VARS["SCW_API_KEY"])
-    
+
     if secret_key or api_key:
         if secret_key:
-            results.append(EnvCheckResult(ENV_VARS["SCW_SECRET_KEY"], True, True, 
+            results.append(EnvCheckResult(ENV_VARS["SCW_SECRET_KEY"], True, True,
                                         "(Scaleway secret key present)"))
         if api_key:
             results.append(EnvCheckResult(ENV_VARS["SCW_API_KEY"], True, True,
@@ -106,13 +113,13 @@ def check_llm_env() -> List[EnvCheckResult]:
     else:
         results.append(EnvCheckResult("SCW_SECRET_KEY or SCW_API_KEY", False, False,
                                     "(At least one Scaleway key required)"))
-    
+
     results.extend([
         check_env_var(ENV_VARS["SCW_OPENAI_BASE_URL"], required=True, validator=validate_url,
                      description="(Scaleway OpenAI base URL)"),
         check_env_var(ENV_VARS["LLM_MODEL"], required=False, description="(LLM model name, optional)")
     ])
-    
+
     return results
 
 
@@ -120,7 +127,8 @@ def check_all_env() -> Dict[str, List[EnvCheckResult]]:
     """Check all environment variables and group by service."""
     return {
         "jitbit": check_jitbit_env(),
-        "jira": check_jira_env(), 
+        "jira": check_jira_env(),
+        "webcrm": check_webcrm_env(),
         "llm": check_llm_env()
     }
 

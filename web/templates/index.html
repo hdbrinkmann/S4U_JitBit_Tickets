@@ -13,7 +13,7 @@
         <!-- Environment Status -->
         <div class="mb-8">
             <h2 class="text-xl font-semibold text-gray-900 mb-4">Environment Status</h2>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <!-- Jitbit Status -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-center">
@@ -64,6 +64,31 @@
                     </div>
                 </div>
 
+                <!-- WebCRM Status -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            {% if env_status.webcrm.status == 'ok' %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-green-100">
+                                <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% else %}
+                            <div class="flex items-center justify-center h-8 w-8 rounded-full bg-red-100">
+                                <svg class="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="ml-3">
+                            <h3 class="text-sm font-medium text-gray-900">WebCRM</h3>
+                            <p class="text-sm text-gray-500">{{ env_status.webcrm.ok }}/{{ env_status.webcrm.total }} checks passed</p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- LLM Status -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <div class="flex items-center">
@@ -94,7 +119,7 @@
         <!-- Workflow Cards -->
         <div class="mb-8">
             <h2 class="text-xl font-semibold text-gray-900 mb-4">Available Workflows</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <!-- Jitbit Flow Card -->
                 <div class="bg-white rounded-lg shadow-lg overflow-hidden">
                     <div class="px-6 py-4">
@@ -154,6 +179,38 @@
                             </div>
                             <a href="/jira" class="text-green-600 hover:text-green-500 font-medium">
                                 Start Workflow →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WebCRM Flow Card -->
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div class="px-6 py-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-purple-500 text-white">
+                                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-gray-900">WebCRM Documents</h3>
+                                <p class="text-sm text-gray-500">Download PDF, DOCX, DOC files from WebCRM API</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-6 py-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center text-sm text-gray-500">
+                                <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.414L10 9.586V6z" clip-rule="evenodd"/>
+                                </svg>
+                                ~5-15 min
+                            </div>
+                            <a href="/webcrm" class="text-purple-600 hover:text-purple-500 font-medium">
+                                Start Download →
                             </a>
                         </div>
                     </div>

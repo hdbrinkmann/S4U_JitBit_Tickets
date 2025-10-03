@@ -17,7 +17,7 @@ except ImportError:
     raise ImportError("FastAPI dependencies missing. Install with: pip install fastapi uvicorn jinja2 python-multipart")
 
 from workflow_app.envcheck import get_env_status_summary
-from workflow_app.flows import run_jitbit_flow, run_jira_flow
+from workflow_app.flows import run_jitbit_flow, run_jira_flow, run_webcrm_flow
 from workflow_app.config import JIRA_PROJECTS, DEFAULTS
 from workflow_app.util import (
     list_runs, get_run_directory, load_run_status, 
@@ -48,9 +48,11 @@ async def run_workflow_background(flow_name: str, params: Dict[str, Any], option
             result = run_jitbit_flow(params, options)
         elif flow_name == "jira":
             result = run_jira_flow(params, options)
+        elif flow_name == "webcrm":
+            result = run_webcrm_flow(params, options)
         else:
             raise ValueError(f"Unknown flow: {flow_name}")
-        
+
         return {
             "success": result.success,
             "run_id": result.run_id,
@@ -143,17 +145,71 @@ async def start_jitbit(
         raise HTTPException(status_code=500, detail=f"Failed to start workflow: {e}")
 
 
+@app.get("/webcrm", response_class=HTMLResponse)
+async def webcrm_form(request: Request):
+    """WebCRM workflow form."""
+    env_status = get_env_status_summary()
+
+    return templates.TemplateResponse("webcrm_form.html", {
+        "request": request,
+        "env_status": env_status,
+        "defaults": DEFAULTS
+    })
+
+
 @app.get("/jira", response_class=HTMLResponse)
 async def jira_form(request: Request):
     """Jira workflow form."""
     env_status = get_env_status_summary()
-    
+
     return templates.TemplateResponse("jira_form.html", {
         "request": request,
         "env_status": env_status,
         "projects": JIRA_PROJECTS,
         "defaults": DEFAULTS
     })
+
+
+@app.post("/webcrm/start")
+async def start_webcrm(
+    request: Request,
+    extensions: str = Form("pdf,docx,doc,rtf"),
+    folders: str = Form("Contracts,Data Processing Agreement,Sales Terms"),
+    skip_existing: bool = Form(True)
+):
+    """Start WebCRM workflow."""
+    # Parse comma-separated values
+    extensions_list = [ext.strip() for ext in extensions.split(",") if ext.strip()]
+    folders_list = [folder.strip() for folder in folders.split(",") if folder.strip()]
+
+    params = {
+        "extensions": extensions_list,
+        "folders": folders_list,
+        "skip_existing": skip_existing
+    }
+
+    options = {
+        "console_output": False
+    }
+
+    # Start background task for better real-time experience
+    try:
+        from workflow_app.util import generate_run_id, create_run_directory, save_run_params, init_run_status
+        from workflow_app.flows import get_flow_steps
+
+        # Pre-create run directory and initialize status
+        run_id = generate_run_id("webcrm")
+        run_dir = create_run_directory(run_id)
+        save_run_params(run_dir, {**params, "flow": "webcrm", **options})
+        init_run_status(run_dir, get_flow_steps("webcrm"))
+
+        # Start background execution with the pre-created run directory
+        future = executor.submit(run_webcrm_flow, params, {**options, "console_output": False}, run_id, run_dir)
+        active_runs[run_id] = future
+
+        return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start workflow: {e}")
 
 
 @app.post("/jira/start")
@@ -176,7 +232,7 @@ async def start_jira(
     """Start Jira workflow."""
     if project not in JIRA_PROJECTS:
         raise HTTPException(status_code=400, detail=f"Invalid project: {project}")
-    
+
     params = {
         "project": project,
         "resolved_after": resolved_after,
@@ -184,10 +240,10 @@ async def start_jira(
         "dedup_threshold_low": dedup_threshold_low,
         "progress": progress
     }
-    
+
     if resolved_before:
         params["resolved_before"] = resolved_before
-    
+
     # Convert empty strings to None for optional integer fields
     if jira_limit and jira_limit.strip().isdigit():
         params["jira_limit"] = int(jira_limit)
@@ -195,7 +251,7 @@ async def start_jira(
         params["llm_limit"] = int(llm_limit)
     if llm_max_calls and llm_max_calls.strip().isdigit():
         params["llm_max_calls"] = int(llm_max_calls)
-    
+
     options = {
         "skip_deduplication": skip_deduplication,
         "skip_existing": skip_existing,
@@ -203,22 +259,22 @@ async def start_jira(
         "append": append,
         "console_output": False
     }
-    
+
     # Start background task for better real-time experience
     try:
         from workflow_app.util import generate_run_id, create_run_directory, save_run_params, init_run_status
         from workflow_app.flows import get_flow_steps
-        
+
         # Pre-create run directory and initialize status
         run_id = generate_run_id("jira", project)
         run_dir = create_run_directory(run_id)
         save_run_params(run_dir, {**params, "flow": "jira", **options})
         init_run_status(run_dir, get_flow_steps("jira"))
-        
+
         # Start background execution with the pre-created run directory
         future = executor.submit(run_jira_flow, params, {**options, "console_output": False}, run_id, run_dir)
         active_runs[run_id] = future
-        
+
         return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start workflow: {e}")

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}WebCRM Workflow - Workflow App{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="max-w-3xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-gray-900">WebCRM Document Download</h1>
+            <p class="mt-1 text-sm text-gray-600">
+                Download documents from WebCRM API with customizable filters
+            </p>
+        </div>
+
+        <!-- Environment Status Warning -->
+        {% if env_status.webcrm.status != 'ok' %}
+        <div class="mb-6 bg-red-50 border border-red-200 rounded-md p-4">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L10 10.586l1.293-1.293a1 1 0 111.414 1.414L11.414 12l1.293 1.293a1 1 0 01-1.414 1.414L10 13.414l-1.293 1.293a1 1 0 01-1.414-1.414L9.586 12 8.293 10.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-red-800">Environment Issue Detected</h3>
+                    <div class="mt-2 text-sm text-red-700">
+                        <p>Please check your environment configuration before starting:</p>
+                        <ul class="list-disc list-inside mt-1">
+                            <li>WebCRM: {{ env_status.webcrm.ok }}/{{ env_status.webcrm.total }} checks passed</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Form -->
+        <form action="/webcrm/start" method="post" class="space-y-6" onkeydown="return event.key != 'Enter';">
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Document Filters</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Configure which documents to download from WebCRM.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="grid grid-cols-6 gap-6">
+                            <!-- File Extensions -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="extensions" class="block text-sm font-medium text-gray-700">File Extensions</label>
+                                <input type="text" name="extensions" id="extensions" required
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       value="pdf,docx,doc,rtf">
+                                <p class="mt-2 text-sm text-gray-500">Comma-separated list of file extensions (without dots)</p>
+                            </div>
+
+                            <!-- Folders -->
+                            <div class="col-span-6 sm:col-span-3">
+                                <label for="folders" class="block text-sm font-medium text-gray-700">Folders</label>
+                                <input type="text" name="folders" id="folders" required
+                                       class="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                                       value="Contracts,Data Processing Agreement,Sales Terms">
+                                <p class="mt-2 text-sm text-gray-500">Comma-separated list of folder names</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download Options -->
+            <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
+                <div class="md:grid md:grid-cols-3 md:gap-6">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">Download Options</h3>
+                        <p class="mt-1 text-sm text-gray-500">
+                            Control download behavior and performance.
+                        </p>
+                    </div>
+                    <div class="mt-5 md:mt-0 md:col-span-2">
+                        <div class="space-y-6">
+                            <!-- Skip Existing -->
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="skip_existing" name="skip_existing" type="checkbox" checked
+                                           class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="skip_existing" class="font-medium text-gray-700">Skip existing files</label>
+                                    <p class="text-gray-500">Skip files that already exist in the download directory</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit -->
+            <div class="flex justify-end">
+                <a href="/" class="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 mr-3">
+                    Cancel
+                </a>
+                <button type="submit"
+                        class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        {% if env_status.webcrm.status != 'ok' %}disabled{% endif %}>
+                    Start WebCRM Download
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

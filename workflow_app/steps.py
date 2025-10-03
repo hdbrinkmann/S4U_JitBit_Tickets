@@ -358,28 +358,28 @@ def step_jira_deduplicate(params: Dict[str, Any], run_dir: Path, logger: RunLogg
 
 
 def step_jira_tickets_to_docx(params: Dict[str, Any], run_dir: Path, logger: RunLogger,
-                             options: Dict[str, Any]) -> StepResult:
+                              options: Dict[str, Any]) -> StepResult:
     """Generate DOCX files from Jira tickets (using deduplicated data by default)."""
     project = params.get("project", "SUP")  # Default to SUP for backward compatibility
-    
+
     # Use project-specific file names
     dedup_output_file_key = f"JIRA_DEDUP_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_DEDUP_OUTPUT"
     llm_output_file_key = f"JIRA_LLM_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_LLM_OUTPUT"
     docx_dir_key = f"JIRA_DOCX_DIR_{project}" if project in ["SUP", "TMS"] else "JIRA_DOCX_DIR"
-    
+
     dedup_output_file = FILE_NAMES.get(dedup_output_file_key, FILE_NAMES["JIRA_DEDUP_OUTPUT"])
     llm_output_file = FILE_NAMES.get(llm_output_file_key, FILE_NAMES["JIRA_LLM_OUTPUT"])
     docx_dir = FILE_NAMES.get(docx_dir_key, FILE_NAMES["JIRA_DOCX_DIR"])
-    
+
     # Use deduplicated file if it exists, otherwise use regular LLM output
     repo_root = get_repo_root()
     dedup_file_path = repo_root / dedup_output_file
-    
+
     if dedup_file_path.exists():
         input_file = dedup_output_file
     else:
         input_file = llm_output_file
-    
+
     cmd = [
         sys.executable,
         SCRIPTS["TICKETS_TO_DOCX"],
@@ -387,6 +387,33 @@ def step_jira_tickets_to_docx(params: Dict[str, Any], run_dir: Path, logger: Run
         "--output-dir", docx_dir,
         "--verbose", "true"
     ]
-    
+
     expected_outputs = [docx_dir]
     return run_step("Generate DOCX from Tickets", cmd, expected_outputs, run_dir, logger, options)
+
+
+# WebCRM workflow steps
+
+def step_webcrm_download_documents(params: Dict[str, Any], run_dir: Path, logger: RunLogger,
+                                  options: Dict[str, Any]) -> StepResult:
+    """Download documents from WebCRM."""
+    extensions = params.get("extensions", ["pdf", "docx", "doc", "rtf"])
+    folders = params.get("folders", ["Contracts", "Data Processing Agreement", "Sales Terms"])
+    skip_existing = params.get("skip_existing", True)
+
+    cmd = [
+        sys.executable,
+        SCRIPTS["WEBCRM_DOWNLOAD"],
+        "--extensions"
+    ] + extensions + [
+        "--folders"
+    ] + folders
+
+    if skip_existing:
+        cmd.append("--skip-existing")
+
+    # For download workflows, we always want to run to check for new files
+    # Set overwrite=True to ensure the step always executes
+    download_options = {**options, "overwrite": True}
+    expected_outputs = [FILE_NAMES["WEBCRM_DOCUMENTS_DIR"], FILE_NAMES["WEBCRM_DOWNLOAD_LOG"]]
+    return run_step("Download WebCRM Documents", cmd, expected_outputs, run_dir, logger, download_options)

@@ -24,17 +24,20 @@ ENV_VARS = {
     # Jitbit
     "JITBIT_API_TOKEN": "JITBIT_API_TOKEN",
     "JITBIT_BASE_URL": "JITBIT_BASE_URL",
-    
+
     # Jira
-    "JIRA_EMAIL": "JIRA_EMAIL", 
+    "JIRA_EMAIL": "JIRA_EMAIL",
     "JIRA_API_TOKEN": "JIRA_API_TOKEN",
-    
+
+    # WebCRM
+    "WEBCRM_API_KEY": "WEBCRM_API_KEY",
+
     # LLM (Scaleway)
     "SCW_SECRET_KEY": "SCW_SECRET_KEY",
-    "SCW_API_KEY": "SCW_API_KEY", 
+    "SCW_API_KEY": "SCW_API_KEY",
     "SCW_OPENAI_BASE_URL": "SCW_OPENAI_BASE_URL",
     "LLM_MODEL": "LLM_MODEL",
-    
+
     # Web UI
     "WORKFLOW_APP_PORT": "WORKFLOW_APP_PORT",
     "WORKFLOW_APP_HOST": "WORKFLOW_APP_HOST",
@@ -45,21 +48,21 @@ ENV_VARS = {
 FILE_NAMES = {
     # Jitbit flow
     "JITBIT_EXPORT": "JitBit_relevante_Tickets.json",
-    "JITBIT_KB_EXPORT": "JitBit_Knowledgebase.json", 
+    "JITBIT_KB_EXPORT": "JitBit_Knowledgebase.json",
     "JITBIT_LLM_OUTPUT": "Ticket_Data_Jitbit.json",
     "JITBIT_NOT_RELEVANT": "Not_Relevant_Jitbit.json",
     "JITBIT_DOCX_DIR": "documents/jitbit",
     "JITBIT_KB_DOCX": "documents/jitbit/Knowledgebase.docx",
-    
+
     # Jira flow (generic/default - maintained for backward compatibility)
     "JIRA_EXPORT": "JIRA_relevante_Tickets.json",
-    "JIRA_LLM_OUTPUT": "Ticket_Data_Jira.json", 
+    "JIRA_LLM_OUTPUT": "Ticket_Data_Jira.json",
     "JIRA_NOT_RELEVANT": "Not_Relevant_Jira.json",
     "JIRA_DEDUP_OUTPUT": "tickets_dedup_Jira.json",
     "JIRA_DEDUP_GROUPS": "duplicate_groups_Jira.json",
     "JIRA_DEDUP_REVIEW": "needs_review_Jira.csv",
     "JIRA_DOCX_DIR": "documents/jira",
-    
+
     # Jira flow (project-specific)
     "JIRA_EXPORT_SUP": "JIRA_relevante_Tickets_SUP.json",
     "JIRA_LLM_OUTPUT_SUP": "Ticket_Data_Jira_SUP.json",
@@ -68,14 +71,18 @@ FILE_NAMES = {
     "JIRA_DEDUP_GROUPS_SUP": "duplicate_groups_Jira_SUP.json",
     "JIRA_DEDUP_REVIEW_SUP": "needs_review_Jira_SUP.csv",
     "JIRA_DOCX_DIR_SUP": "documents/jira/SUP",
-    
+
     "JIRA_EXPORT_TMS": "JIRA_relevante_Tickets_TMS.json",
     "JIRA_LLM_OUTPUT_TMS": "Ticket_Data_Jira_TMS.json",
     "JIRA_NOT_RELEVANT_TMS": "Not_Relevant_Jira_TMS.json",
     "JIRA_DEDUP_OUTPUT_TMS": "tickets_dedup_Jira_TMS.json",
     "JIRA_DEDUP_GROUPS_TMS": "duplicate_groups_Jira_TMS.json",
     "JIRA_DEDUP_REVIEW_TMS": "needs_review_Jira_TMS.csv",
-    "JIRA_DOCX_DIR_TMS": "documents/jira/TMS"
+    "JIRA_DOCX_DIR_TMS": "documents/jira/TMS",
+
+    # WebCRM flow
+    "WEBCRM_DOCUMENTS_DIR": "webcrm_documents",
+    "WEBCRM_DOWNLOAD_LOG": "webcrm_documents/DOWNLOAD_LOG.txt"
 }
 
 # Default script parameters
@@ -101,8 +108,9 @@ DEFAULTS = {
 # Script paths (relative to repository root)
 SCRIPTS = {
     "JITBIT_EXPORT": "ticket_relevante_felder.py",
-    "JITBIT_KB_EXPORT": "kb_export_json.py", 
+    "JITBIT_KB_EXPORT": "kb_export_json.py",
     "JIRA_EXPORT": "jira_relevant_tickets.py",
+    "WEBCRM_DOWNLOAD": "download_all_webcrm_docs.py",
     "LLM_PROCESS": "process_tickets_with_llm.py",
     "DEDUP": "scripts/dedupe_tickets.py",
     "TICKETS_TO_DOCX": "tickets_to_docx.py",
