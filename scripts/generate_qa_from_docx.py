@@ -1043,30 +1043,38 @@ def cmd_docx(args: argparse.Namespace) -> int:
         if meta:
             doc.add_paragraph(meta)
 
-        table = doc.add_table(rows=1, cols=2)
-        hdr = table.rows[0].cells
-        hdr[0].text = "Question"
-        hdr[1].text = "Answer"
-
-        rows_added = 0
+        questions_added = 0
         for ch in data.get("chapters", []):
             chapter_title = (ch.get("chapter_title") or ch.get("title") or "Untitled").strip()
+            
+            # Add chapter heading if we have multiple chapters with questions
+            if len(data.get("chapters", [])) > 1 and ch.get("questions", []):
+                doc.add_heading(chapter_title, level=2)
+            
             for qa in ch.get("questions", []):
                 q = (qa.get("question") or "").strip()
                 a = (qa.get("answer") or "").strip()
                 if not q or not a:
                     continue
-                row = table.add_row().cells
-                row[0].text = q
-                row[1].text = a
-                rows_added += 1
+                
+                # Add question as paragraph with colon
+                question_text = f"{q}:" if not q.endswith(':') else q
+                doc.add_paragraph(question_text)
+                
+                # Add answer as paragraph
+                doc.add_paragraph(a)
+                
+                # Add empty paragraph for spacing (equivalent to two CRLFs)
+                doc.add_paragraph("")
+                
+                questions_added += 1
 
-        if rows_added == 0:
+        if questions_added == 0:
             doc.add_paragraph("No questions found for this document.")
 
         try:
             doc.save(out_path)
-            print(f"[docx] Wrote DOCX: {out_path} (rows={rows_added})")
+            print(f"[docx] Wrote DOCX: {out_path} (questions={questions_added})")
         except Exception as e:
             print(f"[docx] Failed to write {out_path}: {e}", file=sys.stderr)
 

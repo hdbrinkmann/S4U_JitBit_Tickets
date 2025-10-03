@@ -13,7 +13,7 @@ from .config import (
     SCRIPTS, FILE_NAMES, DEFAULTS, get_repo_root, make_absolute_path
 )
 from .logging import RunLogger, StreamCapture
-from .util import should_skip_step, update_step_status, copy_artifact_to_run
+from .util import should_skip_step, update_step_status, copy_artifact_to_run, validate_json_file, file_exists_and_not_empty
 from .subprocess_runner import execute_subprocess_realtime
 
 
@@ -113,6 +113,24 @@ def run_step(step_name: str, cmd: List[str], expected_outputs: List[str],
         duration = time.time() - start_time
         
         if return_code == 0:
+            # Post-validate expected outputs to ensure the step actually produced them
+            repo_root = get_repo_root()
+            missing_or_invalid = []
+            for output_file in expected_outputs:
+                full_path = repo_root / output_file
+                if output_file.endswith(".json"):
+                    if not validate_json_file(full_path):
+                        missing_or_invalid.append(output_file)
+                else:
+                    if not file_exists_and_not_empty(full_path):
+                        missing_or_invalid.append(output_file)
+            
+            if missing_or_invalid:
+                error_msg = f"Expected outputs missing or invalid: {', '.join(missing_or_invalid)}"
+                logger.step_end(step_name, success=False)
+                update_step_status(run_dir, step_name, "failed", error_msg)
+                return StepResult(success=False, message=error_msg, duration_seconds=duration)
+            
             logger.step_end(step_name, success=True)
             update_step_status(run_dir, step_name, "success")
             
@@ -240,13 +258,17 @@ def step_jira_export_tickets(params: Dict[str, Any], run_dir: Path, logger: RunL
     # Build JQL
     jql = f"project={project} order by resolutiondate DESC"
     
+    # Use project-specific output file
+    export_file_key = f"JIRA_EXPORT_{project}" if project in ["SUP", "TMS"] else "JIRA_EXPORT"
+    export_file = FILE_NAMES.get(export_file_key, FILE_NAMES["JIRA_EXPORT"])
+    
     cmd = [
         sys.executable,
         SCRIPTS["JIRA_EXPORT"],
         "--jql", jql,
         "--resolved-only",
         "--resolved-after", resolved_after,
-        "--export", FILE_NAMES["JIRA_EXPORT"]
+        "--export", export_file
     ]
     
     # Add optional parameters
@@ -259,19 +281,30 @@ def step_jira_export_tickets(params: Dict[str, Any], run_dir: Path, logger: RunL
     if params.get("progress"):
         cmd.append("--progress")
     
-    expected_outputs = [FILE_NAMES["JIRA_EXPORT"]]
+    expected_outputs = [export_file]
     return run_step("Export Jira Tickets", cmd, expected_outputs, run_dir, logger, options)
 
 
 def step_jira_process_llm(params: Dict[str, Any], run_dir: Path, logger: RunLogger,
                          options: Dict[str, Any]) -> StepResult:
     """Process Jira tickets with LLM."""
+    project = params.get("project", "SUP")  # Default to SUP for backward compatibility
+    
+    # Use project-specific file names
+    export_file_key = f"JIRA_EXPORT_{project}" if project in ["SUP", "TMS"] else "JIRA_EXPORT"
+    llm_output_file_key = f"JIRA_LLM_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_LLM_OUTPUT"
+    not_relevant_file_key = f"JIRA_NOT_RELEVANT_{project}" if project in ["SUP", "TMS"] else "JIRA_NOT_RELEVANT"
+    
+    export_file = FILE_NAMES.get(export_file_key, FILE_NAMES["JIRA_EXPORT"])
+    llm_output_file = FILE_NAMES.get(llm_output_file_key, FILE_NAMES["JIRA_LLM_OUTPUT"])
+    not_relevant_file = FILE_NAMES.get(not_relevant_file_key, FILE_NAMES["JIRA_NOT_RELEVANT"])
+    
     cmd = [
         sys.executable,
         SCRIPTS["LLM_PROCESS"],
-        "--input", FILE_NAMES["JIRA_EXPORT"],
-        "--output", FILE_NAMES["JIRA_LLM_OUTPUT"],
-        "--not-relevant-out", FILE_NAMES["JIRA_NOT_RELEVANT"]
+        "--input", export_file,
+        "--output", llm_output_file,
+        "--not-relevant-out", not_relevant_file
     ]
     
     # Add optional parameters
@@ -282,31 +315,44 @@ def step_jira_process_llm(params: Dict[str, Any], run_dir: Path, logger: RunLogg
     if options.get("append"):
         cmd.append("--append")
     
-    expected_outputs = [FILE_NAMES["JIRA_LLM_OUTPUT"], FILE_NAMES["JIRA_NOT_RELEVANT"]]
+    expected_outputs = [llm_output_file, not_relevant_file]
     return run_step("Process Tickets with LLM", cmd, expected_outputs, run_dir, logger, options)
 
 
 def step_jira_deduplicate(params: Dict[str, Any], run_dir: Path, logger: RunLogger,
                          options: Dict[str, Any]) -> StepResult:
     """Deduplicate Jira tickets."""
+    project = params.get("project", "SUP")  # Default to SUP for backward compatibility
+    
+    # Use project-specific file names
+    llm_output_file_key = f"JIRA_LLM_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_LLM_OUTPUT"
+    dedup_output_file_key = f"JIRA_DEDUP_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_DEDUP_OUTPUT"
+    dedup_groups_file_key = f"JIRA_DEDUP_GROUPS_{project}" if project in ["SUP", "TMS"] else "JIRA_DEDUP_GROUPS"
+    dedup_review_file_key = f"JIRA_DEDUP_REVIEW_{project}" if project in ["SUP", "TMS"] else "JIRA_DEDUP_REVIEW"
+    
+    llm_output_file = FILE_NAMES.get(llm_output_file_key, FILE_NAMES["JIRA_LLM_OUTPUT"])
+    dedup_output_file = FILE_NAMES.get(dedup_output_file_key, FILE_NAMES["JIRA_DEDUP_OUTPUT"])
+    dedup_groups_file = FILE_NAMES.get(dedup_groups_file_key, FILE_NAMES["JIRA_DEDUP_GROUPS"])
+    dedup_review_file = FILE_NAMES.get(dedup_review_file_key, FILE_NAMES["JIRA_DEDUP_REVIEW"])
+    
     threshold = params.get("dedup_threshold", DEFAULTS["DEDUP_THRESHOLD"])
     threshold_low = params.get("dedup_threshold_low", DEFAULTS["DEDUP_THRESHOLD_LOW"])
     
     cmd = [
         sys.executable,
         SCRIPTS["DEDUP"],
-        "--input", FILE_NAMES["JIRA_LLM_OUTPUT"],
-        "--out", FILE_NAMES["JIRA_DEDUP_OUTPUT"],
-        "--groups-out", FILE_NAMES["JIRA_DEDUP_GROUPS"],
-        "--review-out", FILE_NAMES["JIRA_DEDUP_REVIEW"],
+        "--input", llm_output_file,
+        "--out", dedup_output_file,
+        "--groups-out", dedup_groups_file,
+        "--review-out", dedup_review_file,
         "--threshold", str(threshold),
         "--threshold-low", str(threshold_low)
     ]
     
     expected_outputs = [
-        FILE_NAMES["JIRA_DEDUP_OUTPUT"],
-        FILE_NAMES["JIRA_DEDUP_GROUPS"],
-        FILE_NAMES["JIRA_DEDUP_REVIEW"]
+        dedup_output_file,
+        dedup_groups_file,
+        dedup_review_file
     ]
     return run_step("Deduplicate Tickets", cmd, expected_outputs, run_dir, logger, options)
 
@@ -314,22 +360,33 @@ def step_jira_deduplicate(params: Dict[str, Any], run_dir: Path, logger: RunLogg
 def step_jira_tickets_to_docx(params: Dict[str, Any], run_dir: Path, logger: RunLogger,
                              options: Dict[str, Any]) -> StepResult:
     """Generate DOCX files from Jira tickets (using deduplicated data by default)."""
+    project = params.get("project", "SUP")  # Default to SUP for backward compatibility
+    
+    # Use project-specific file names
+    dedup_output_file_key = f"JIRA_DEDUP_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_DEDUP_OUTPUT"
+    llm_output_file_key = f"JIRA_LLM_OUTPUT_{project}" if project in ["SUP", "TMS"] else "JIRA_LLM_OUTPUT"
+    docx_dir_key = f"JIRA_DOCX_DIR_{project}" if project in ["SUP", "TMS"] else "JIRA_DOCX_DIR"
+    
+    dedup_output_file = FILE_NAMES.get(dedup_output_file_key, FILE_NAMES["JIRA_DEDUP_OUTPUT"])
+    llm_output_file = FILE_NAMES.get(llm_output_file_key, FILE_NAMES["JIRA_LLM_OUTPUT"])
+    docx_dir = FILE_NAMES.get(docx_dir_key, FILE_NAMES["JIRA_DOCX_DIR"])
+    
     # Use deduplicated file if it exists, otherwise use regular LLM output
     repo_root = get_repo_root()
-    dedup_file = repo_root / FILE_NAMES["JIRA_DEDUP_OUTPUT"]
+    dedup_file_path = repo_root / dedup_output_file
     
-    if dedup_file.exists():
-        input_file = FILE_NAMES["JIRA_DEDUP_OUTPUT"]
+    if dedup_file_path.exists():
+        input_file = dedup_output_file
     else:
-        input_file = FILE_NAMES["JIRA_LLM_OUTPUT"]
+        input_file = llm_output_file
     
     cmd = [
         sys.executable,
         SCRIPTS["TICKETS_TO_DOCX"],
         "--input", input_file,
-        "--output-dir", FILE_NAMES["JIRA_DOCX_DIR"],
+        "--output-dir", docx_dir,
         "--verbose", "true"
     ]
     
-    expected_outputs = [FILE_NAMES["JIRA_DOCX_DIR"]]
+    expected_outputs = [docx_dir]
     return run_step("Generate DOCX from Tickets", cmd, expected_outputs, run_dir, logger, options)

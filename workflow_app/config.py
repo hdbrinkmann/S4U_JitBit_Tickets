@@ -51,14 +51,31 @@ FILE_NAMES = {
     "JITBIT_DOCX_DIR": "documents/jitbit",
     "JITBIT_KB_DOCX": "documents/jitbit/Knowledgebase.docx",
     
-    # Jira flow
+    # Jira flow (generic/default - maintained for backward compatibility)
     "JIRA_EXPORT": "JIRA_relevante_Tickets.json",
     "JIRA_LLM_OUTPUT": "Ticket_Data_Jira.json", 
     "JIRA_NOT_RELEVANT": "Not_Relevant_Jira.json",
     "JIRA_DEDUP_OUTPUT": "tickets_dedup_Jira.json",
     "JIRA_DEDUP_GROUPS": "duplicate_groups_Jira.json",
     "JIRA_DEDUP_REVIEW": "needs_review_Jira.csv",
-    "JIRA_DOCX_DIR": "documents/jira"
+    "JIRA_DOCX_DIR": "documents/jira",
+    
+    # Jira flow (project-specific)
+    "JIRA_EXPORT_SUP": "JIRA_relevante_Tickets_SUP.json",
+    "JIRA_LLM_OUTPUT_SUP": "Ticket_Data_Jira_SUP.json",
+    "JIRA_NOT_RELEVANT_SUP": "Not_Relevant_Jira_SUP.json",
+    "JIRA_DEDUP_OUTPUT_SUP": "tickets_dedup_Jira_SUP.json",
+    "JIRA_DEDUP_GROUPS_SUP": "duplicate_groups_Jira_SUP.json",
+    "JIRA_DEDUP_REVIEW_SUP": "needs_review_Jira_SUP.csv",
+    "JIRA_DOCX_DIR_SUP": "documents/jira/SUP",
+    
+    "JIRA_EXPORT_TMS": "JIRA_relevante_Tickets_TMS.json",
+    "JIRA_LLM_OUTPUT_TMS": "Ticket_Data_Jira_TMS.json",
+    "JIRA_NOT_RELEVANT_TMS": "Not_Relevant_Jira_TMS.json",
+    "JIRA_DEDUP_OUTPUT_TMS": "tickets_dedup_Jira_TMS.json",
+    "JIRA_DEDUP_GROUPS_TMS": "duplicate_groups_Jira_TMS.json",
+    "JIRA_DEDUP_REVIEW_TMS": "needs_review_Jira_TMS.csv",
+    "JIRA_DOCX_DIR_TMS": "documents/jira/TMS"
 }
 
 # Default script parameters

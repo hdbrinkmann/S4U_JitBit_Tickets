@@ -2,25 +2,24 @@
 
 This repository contains Python programs that work together to extract Jitbit and Jira tickets and the JitBit knowledge base articles via API, transform them into concise summaries using an LLM via Scaleway (OpenAI-compatible), optionally deduplicate quasi-duplicate tickets using multilingual embeddings, and render them as PDF/DOCX documents.
 
-The App runs on the users' local machine. All data is located on this machine. AI inference provider is Scaleway, a French company, from Scaleways' Paris datacenter. All necessary documents (TOS and DPA) are in place, the legal relationship is between S4U and Scaleway. 
+The application runs on the user's local machine. All data remains on this machine. AI inference is provided by Scaleway, a French company, from Scaleway's Paris datacenter. All necessary documents (TOS and DPA) are in place, with the legal relationship between S4U and Scaleway.
 
-To run the process with the new comprehensive Web-UI: 
+## 🚀 Quick Start (Recommended)
+
+The Workflow App provides a modern web interface for complete end-to-end processing:
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
 # Start the web server
-python cli.py web --port 8787
+python3 cli.py web --port 8787
 
 # Open browser to: http://127.0.0.1:8787
+```
 
-The underlying process is as follows:
+This is the recommended approach for most users. Continue reading for detailed documentation.
 
-1) Download JitBit (S4U) ticket data and store them into JitBit_relevant_tickets.json with "ticket_relevante_felder.py", also download the JitBit Knowledge Base with "kb_export_json.py"
-2) Download Jira (TP,TM) ticket data and store them into Jira_relevant_tickets.json with "jira_relevant_tickets.py"
-3) Process this raw data with "process_tickets_with_llm.py" into separate result files for JitBit and Jira
-4) Opttionally (recommeneded) De-Duplicate the files from step 3 with "/scripts/dedupe_tickets.py", create separate output files for each source (JitBit, Jira)
-5) Run "tickets_to_docx" to generate DOCX files with results for both (deduped) result-JSONs
-6) Generate DOCX for JitBit Knowledge Base Data with "kb_to_docx.py"
-7) Use the DOCX files in TG Buddy within knowledge fields, update the vector-database in TG Buddy
-8) Copy the (deduped) JSON results into the TG Buddy docker container root directory
 
 ## Main Programs:
 - **ticket_relevante_felder.py** — Extracts closed tickets from Jitbit via API, cleans text fields, and writes a consolidated JSON file.
@@ -138,6 +137,57 @@ Instead of running individual scripts manually, the Workflow App orchestrates **
 3. **LLM Processing** — Process tickets with configurable parameters
 4. **Deduplication** — Run `scripts/dedupe_tickets.py` with similarity analysis
 5. **Generate DOCX** — Create final documents from deduplicated data
+
+### 🆕 TMS Support Feature
+
+The application now supports processing TMS (Timemap Support) tickets alongside the existing SUP (Danish Support) tickets from JIRA. This feature enables:
+
+- **Separate Data Files**: SUP and TMS tickets are exported to different JSON files
+- **Independent Processing**: Each project can be processed independently without conflicts
+- **Separate Documents**: Word documents are generated in project-specific directories
+- **Backward Compatibility**: Existing workflows for SUP project continue to work as before
+
+#### **File Structure**:
+- **SUP Project Files**:
+  - Export: `JIRA_relevante_Tickets_SUP.json`
+  - LLM Output: `Ticket_Data_Jira_SUP.json`
+  - Not Relevant: `Not_Relevant_Jira_SUP.json`
+  - Dedup Output: `tickets_dedup_Jira_SUP.json`
+  - Dedup Groups: `duplicate_groups_Jira_SUP.json`
+  - Dedup Review: `needs_review_Jira_SUP.csv`
+  - DOCX Directory: `documents/jira/SUP/`
+
+- **TMS Project Files**:
+  - Export: `JIRA_relevante_Tickets_TMS.json`
+  - LLM Output: `Ticket_Data_Jira_TMS.json`
+  - Not Relevant: `Not_Relevant_Jira_TMS.json`
+  - Dedup Output: `tickets_dedup_Jira_TMS.json`
+  - Dedup Groups: `duplicate_groups_Jira_TMS.json`
+  - Dedup Review: `needs_review_Jira_TMS.csv`
+  - DOCX Directory: `documents/jira/TMS/`
+
+#### **How to Use**:
+
+##### Web Interface:
+1. Navigate to the Jira Workflow page
+2. Select "TMS (Timemap Support)" from the project radio buttons
+3. Fill in the required parameters (Resolved After date, etc.)
+4. Click "Start Jira Workflow"
+
+##### Command Line Interface:
+```bash
+# Process TMS tickets
+python cli.py run-jira --project TMS --resolved-after 2023-01-01
+
+# Process SUP tickets (existing functionality)
+python cli.py run-jira --project SUP --resolved-after 2023-01-01
+```
+
+#### **Benefits**:
+- **Isolation**: SUP and TMS workflows don't interfere with each other
+- **Organization**: Files are clearly separated by project
+- **Scalability**: Easy to add support for additional JIRA projects
+- **Flexibility**: Can run both projects simultaneously without conflicts
 
 ### 🌟 Web Interface Features
 

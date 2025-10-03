@@ -9,6 +9,7 @@ import html
 import argparse
 import json
 import time
+import sys
 from datetime import datetime, timezone, timedelta
 
 # ------------------------------
@@ -16,25 +17,39 @@ from datetime import datetime, timezone, timedelta
 # ------------------------------
 # Load environment variables from a local .env file if present
 load_dotenv()
-JIRA_EMAIL = os.getenv("JIRA_EMAIL")          # deine Atlassian‑E‑Mail
-JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")  # das erzeugte API‑Token
+DEFAULT_JIRA_EMAIL = os.getenv("JIRA_EMAIL")          # Default Atlassian email (SUP)
+DEFAULT_JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")  # Default API token (SUP)
 
+# Base URL is selected dynamically per project (SUP vs TMS)
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL_SUP") or "https://timeplan.atlassian.net"  # default; will be overridden
 
-JIRA_BASE_URL = "https://timeplan.atlassian.net"  # ohne /rest/…
-
-if not JIRA_EMAIL or not JIRA_API_TOKEN:
-    raise RuntimeError("Bitte JIRA_EMAIL und JIRA_API_TOKEN setzen (z.B. in einer .env Datei im Projektordner).")
+# Optional project-specific credentials and base URLs
+JIRA_TMS_EMAIL = os.getenv("JIRA_TMS_EMAIL")
+JIRA_TMS_API_TOKEN = os.getenv("JIRA_TMS_API_TOKEN")
+JIRA_BASE_URL_TMS = os.getenv("JIRA_BASE_URL_TMS") or "https://timeplan.atlassian.net"
+JIRA_BASE_URL_SUP = os.getenv("JIRA_BASE_URL_SUP") or "https://timeplan.atlassian.net"
 
 # ------------------------------
 # 2️⃣  Header erzeugen
 # ------------------------------
-basic_auth = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_API_TOKEN}".encode()).decode()
-HEADERS = {
-    "Authorization": f"Basic {basic_auth}",
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": "JiraFetcher/1.0 (+python requests)"
-}
+def _make_headers(email: str, token: str) -> dict:
+    if email and token:
+        ba = base64.b64encode(f"{email}:{token}".encode()).decode()
+        return {
+            "Authorization": f"Basic {ba}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "JiraFetcher/1.0 (+python requests)"
+        }
+    else:
+        # Allow late binding; requests without auth will fail until configured for a project
+        return {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "JiraFetcher/1.0 (+python requests)"
+        }
+
+HEADERS = _make_headers(DEFAULT_JIRA_EMAIL, DEFAULT_JIRA_API_TOKEN)
 
 # Configure requests Session with retries and set default headers
 SESSION = requests.Session()
@@ -111,6 +126,32 @@ def heartbeat(label: str, current: int = None, total: int = None):
         except Exception:
             pass
         _heartbeat_last_ts = now
+
+# ------------------------------
+# Site selection and auth per project
+# ------------------------------
+def configure_site_for_project(project_key: str):
+    """
+    Select Jira site and credentials based on project key, and update global SESSION and JIRA_BASE_URL.
+    Env support:
+      - SUP: JIRA_EMAIL/JIRA_API_TOKEN and JIRA_BASE_URL_SUP (default https://timeplan.atlassian.net)
+      - TMS: JIRA_TMS_EMAIL/JIRA_TMS_API_TOKEN and JIRA_BASE_URL_TMS (default https://timeplan.atlassian.net)
+    """
+    global JIRA_BASE_URL, SESSION
+    pk = (project_key or "").upper()
+    if pk == "TMS":
+        base_url = os.getenv("JIRA_BASE_URL_TMS") or JIRA_BASE_URL_TMS
+        email = os.getenv("JIRA_TMS_EMAIL") or DEFAULT_JIRA_EMAIL
+        token = os.getenv("JIRA_TMS_API_TOKEN") or DEFAULT_JIRA_API_TOKEN
+    else:
+        base_url = os.getenv("JIRA_BASE_URL_SUP") or JIRA_BASE_URL_SUP
+        email = DEFAULT_JIRA_EMAIL
+        token = DEFAULT_JIRA_API_TOKEN
+    if not email or not token:
+        raise RuntimeError(f"Missing Jira credentials for project {pk}. Please set env vars (e.g., JIRA_TMS_EMAIL/JIRA_TMS_API_TOKEN for TMS).")
+    JIRA_BASE_URL = base_url
+    hdrs = _make_headers(email, token)
+    SESSION.headers.update(hdrs)
 
 # ------------------------------
 # Filter helpers (resolved-only, resolved-after)
@@ -322,6 +363,12 @@ def get_first_issues(jql: str = "order by created ASC", limit: int = None):
 
     reset_heartbeat()
 
+    # Track first key to detect repeating pages if 'total' is not provided
+    prev_first_key = None
+    # Enhanced JQL pagination uses nextPageToken instead of startAt
+    next_token = None
+    page_counter = 0
+
     while True:
         if limit is not None:
             remaining = max(0, limit - len(issues))
@@ -337,31 +384,45 @@ def get_first_issues(jql: str = "order by created ASC", limit: int = None):
                 print(f"Requesting ALL issues with JQL: {jql}")
                 printed = True
 
+        # Use GET search/jql endpoint with query parameters (per Atlassian migration guide)
         params = {
             "jql": jql,
-            "startAt": start_at,
             "maxResults": batch_size,
-            "fields": "summary,status,assignee,description,attachment,resolution,resolutiondate"
+            "fields": "summary,status,assignee,description,attachment,resolution,resolutiondate,created,issuetype"
         }
+        if next_token:
+            params["nextPageToken"] = next_token
         resp = SESSION.get(
-            f"{JIRA_BASE_URL}/rest/api/3/search",
+            f"{JIRA_BASE_URL}/rest/api/3/search/jql",
             params=params,
             timeout=TIMEOUT
         )
         resp.raise_for_status()
         data = resp.json() or {}
         batch = data.get("issues") or []
-        total = data.get("total", 0)
+        raw_total = data.get("total")
+        total = raw_total if isinstance(raw_total, int) and raw_total > 0 else None
+        is_last = data.get("isLast")
+        next_token = data.get("nextPageToken")
 
-        prev_start = start_at
+        # Safeguard: if server ignores startAt (no total) and returns the same first page repeatedly, stop
+        if total is None and batch:
+            first_key = (batch[0] or {}).get("key")
+            if first_key and first_key == (prev_first_key or None):
+                print("[search] Detected repeating page without progress; stopping pagination to avoid infinite loop.")
+                break
+            prev_first_key = first_key
+
+        page_counter += 1
 
         issues.extend(batch)
-        start_at += len(batch)
 
-        log_progress(f"[search] startAt={prev_start} fetched={len(batch)} total≈{total} accumulated={len(issues)}")
-        heartbeat("search", len(issues), total)
+        log_progress(f"[search] page={page_counter} fetched={len(batch)} accumulated={len(issues)}")
+        heartbeat("search", len(issues), None)
 
-        if len(batch) == 0 or start_at >= total:
+        # Break when server indicates last page, or when we received a short page (< batch_size).
+        # Do NOT trust 'total' from /search/jql (it may be capped at 100); rely on page length/isLast.
+        if len(batch) == 0 or (is_last is True) or (len(batch) < batch_size):
             break
 
     return issues
@@ -458,17 +519,18 @@ def export_jira_json(issue_keys, out_path="JIRA_relevante_Tickets.json", filter_
                 "Attachments": []
             })
 
-        # ticket_id should be the key string (e.g., "SUP1234"), not the internal numeric ID
-        ticket_id = d.get("key")
+        # ticket_id should be the key string (e.g., "SUP-1234"), not the internal numeric ID
+        original_key = d.get("key") or ""
+        original_url = d.get("url") or ""
 
         tickets.append({
-            "ticket_id": ticket_id,
+            "ticket_id": original_key,
             "CategoryName": d.get("category"),
             "IssueDate": d.get("created"),
             "Subject": d.get("summary"),
             "Body": d.get("problem") or "",
             "Status": d.get("status"),
-            "Url": d.get("url"),
+            "Url": original_url,
             "Attachments": attachments,
             "kommentare": kommentare
         })
@@ -579,6 +641,16 @@ if __name__ == "__main__":
 
         if args.issue:
             key = args.issue.strip()
+            # Configure site/credentials based on the issue key prefix (project)
+            try:
+                proj_prefix = key.split("-")[0].upper()
+                if proj_prefix == "TM":
+                    # Normalize legacy 'TM' to 'TMS' project key
+                    proj_prefix = "TMS"
+                configure_site_for_project(proj_prefix)
+            except Exception as _e:
+                print(f"Konfigurationsfehler: {_e}")
+                sys.exit(2)
             if args.export:
                 fc = f"issue={key}"
                 if args.resolved_only:
@@ -611,6 +683,16 @@ if __name__ == "__main__":
                 if parse_resolved_after_arg(args.resolved_after) > parse_resolved_after_arg(args.resolved_before):
                     parser.error("--resolved-after date must be on or before --resolved-before date.")
 
+            # Configure site/credentials based on project in JQL
+            _m = re.search(r"\bproject\s*=\s*([A-Za-z]+)\b", args.jql or "", flags=re.IGNORECASE)
+            _proj = _m.group(1).upper() if _m else "SUP"
+            if _proj == "TM":
+                parser.error('Project key "TM" is not supported. Use "TMS".')
+            try:
+                configure_site_for_project(_proj)
+            except Exception as _e:
+                print(f"Konfigurationsfehler: {_e}")
+                sys.exit(2)
             built_jql = build_filtered_jql(args.jql, args.resolved_only, args.resolved_after, args.resolved_before)
             issues = get_first_issues(jql=built_jql, limit=args.limit)
             keys = [it.get("key") for it in issues if it and it.get("key")]
@@ -654,5 +736,7 @@ if __name__ == "__main__":
             except Exception:
                 body = ""
         print(f"HTTP-Fehler: {e}. Antwortauszug: {body}")
+        sys.exit(2)
     except Exception as e:
         print(f"Unerwarteter Fehler: {e}")
+        sys.exit(1)

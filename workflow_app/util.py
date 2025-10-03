@@ -313,23 +313,53 @@ def copy_artifact_to_run(run_dir: Path, source_file: str, artifact_name: str = N
 
 
 def get_run_artifacts(run_dir: Path) -> List[Dict[str, Any]]:
-    """Get list of artifacts in the run directory."""
+    """Get list of artifacts (files and directories) in the run directory."""
     artifacts_dir = run_dir / RUN_ARTIFACTS_DIR
     
     if not artifacts_dir.exists():
         return []
     
-    artifacts = []
-    for artifact_file in artifacts_dir.iterdir():
-        if artifact_file.is_file():
-            stat = artifact_file.stat()
-            artifacts.append({
-                "name": artifact_file.name,
-                "path": str(artifact_file),
-                "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-            })
+    artifacts: List[Dict[str, Any]] = []
+    for artifact in artifacts_dir.iterdir():
+        try:
+            if artifact.is_file():
+                stat = artifact.stat()
+                artifacts.append({
+                    "name": artifact.name,
+                    "path": str(artifact),
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "type": "file"
+                })
+            elif artifact.is_dir():
+                # Aggregate size and latest modified time for directories
+                total_size = 0
+                latest_mtime = artifact.stat().st_mtime
+                items = 0
+                for p in artifact.rglob("*"):
+                    try:
+                        st = p.stat()
+                        if p.is_file():
+                            total_size += st.st_size
+                        latest_mtime = max(latest_mtime, st.st_mtime)
+                        items += 1
+                    except Exception:
+                        # Skip unreadable entries
+                        continue
+                artifacts.append({
+                    "name": artifact.name,
+                    "path": str(artifact),
+                    "size": total_size,
+                    "modified": datetime.fromtimestamp(latest_mtime).isoformat(),
+                    "type": "dir",
+                    "items": items
+                })
+        except Exception:
+            # Skip items we cannot stat/read
+            continue
     
+    # Sort: directories first, then files, by name
+    artifacts.sort(key=lambda x: (x.get("type") != "dir", x.get("name", "").lower()))
     return artifacts
 
 

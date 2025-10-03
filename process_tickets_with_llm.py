@@ -543,10 +543,10 @@ def _looks_like_image_url(u: str, filename: str = "") -> bool:
         # Check filename first if provided
         if filename:
             fn_lower = filename.lower()
-            # If filename has image extension -> it's an image
+            # If filename has image extension → it's an image
             if any(fn_lower.endswith(ext) for ext in IMAGE_EXTS):
                 return True
-            # If filename has non-image extension -> it's not an image
+            # If filename has non-image extension → it's not an image
             if any(fn_lower.endswith(ext) for ext in [".pdf", ".doc", ".docx", ".txt", ".xlsx", ".xls", ".zip", ".rar"]):
                 return False
         
@@ -733,9 +733,9 @@ def _merge_numeric_keys_into_solution(obj_text: str) -> Tuple[str, Optional[str]
 def repair_llm_json_str(obj_text: str) -> str:
     """
     Attempt to repair common top-level JSON issues:
-    - Missing ticket_id key at start: { 12345, ... } -> {"ticket_id": 12345, ...}
-    - Bare ISO date value between fields -> insert as "date": "<iso>"
-    - Stray numeric keys like "6": "..." -> merge into solution string
+    - Missing ticket_id key at start: { 12345, ... } → {"ticket_id": 12345, ...}
+    - Bare ISO date value between fields → insert as "date": "<iso>"
+    - Stray numeric keys like "6": "..." → merge into solution string
     """
     t = obj_text
 
@@ -894,8 +894,8 @@ def normalize_summary(
         if ticket_str.isdigit():
             # Pure numeric ID, add S4U_ prefix
             out_ticket_id = f"S4U_{int(ticket_id)}"
-        elif re.match(r'^[A-Z]+_?\d+', ticket_str):
-            # Already has string prefix (like SUP123, TMS_456), keep as-is
+        elif re.match(r'^[A-Z]+[_\-]?\d+', ticket_str):
+            # Already has string prefix (like SUP-123, TMS-456), keep as-is
             out_ticket_id = ticket_str
         else:
             # Other cases, add S4U_ prefix
@@ -941,6 +941,17 @@ def normalize_summary(
             filenames_dedup.append(fn)
 
     images_dedup = _filter_image_urls(urls_dedup, filenames_dedup)
+
+    # Fix mismatch between project key in ticket_url and ticket_id (e.g., SUP- vs TMS-)
+    try:
+        if isinstance(ticket_url, str) and "/browse/" in ticket_url:
+            base = ticket_url.split("/browse/")[0].rstrip("/")
+            # If ticket_id looks like a Jira key, ensure URL uses the same key
+            if isinstance(out_ticket_id, str) and re.match(r"^[A-Z]+-\d+$", out_ticket_id):
+                ticket_url = f"{base}/browse/{out_ticket_id}"
+    except Exception:
+        # keep original ticket_url on any error
+        pass
 
     return {
         "ticket_id": out_ticket_id,
@@ -1270,11 +1281,11 @@ def process_tickets(
 # ---------------------------
 
 def resolve_model_from_env() -> str:
-    # Priority: LLM_MODEL -> SCW_MODEL -> TOGETHER_MODEL -> default
+    # Priority: LLM_MODEL → SCW_MODEL → TOGETHER_MODEL → default
     model = os.environ.get("LLM_MODEL") or os.environ.get("SCW_MODEL") or os.environ.get("TOGETHER_MODEL")
     if not model:
         model = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
-    # Normalize provider-prefixed ids like "openai/gpt-oss-120b" -> "gpt-oss-120b"
+    # Normalize provider-prefixed ids like "openai/gpt-oss-120b" → "gpt-oss-120b"
     if isinstance(model, str) and "/" in model:
         parts = model.split("/")
         if parts[-1]:
